@@ -1,0 +1,15 @@
+[package]
+name = "smtcop"
+version = "0.1.0"
+authors = ["Michael Rawson <michael@rawsons.uk>"]
+edition = "2018"
+description = "an automatic theorem prover for first-order logic"
+license = "MIT"
+
+[dependencies]
+anyhow = "1.0"
+clap = "3.0.0-beta.2"
+fnv = "1.0"
+memmap = "0.7"
+thiserror = "1.0"
+tptp = "0.28"

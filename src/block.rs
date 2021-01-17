@@ -1,0 +1,242 @@
+use std::fmt;
+use std::hash::{Hash, Hasher};
+use std::marker::PhantomData;
+use std::ops::{Index, IndexMut};
+
+pub(crate) struct Id<T> {
+    pub(crate) index: u32,
+    _phantom: PhantomData<T>,
+}
+
+impl<T> Id<T> {
+    pub(crate) fn new(index: u32) -> Self {
+        let _phantom = PhantomData;
+        Self { index, _phantom }
+    }
+}
+
+impl<T> Clone for Id<T> {
+    fn clone(&self) -> Self {
+        Self::new(self.index)
+    }
+}
+
+impl<T> Copy for Id<T> {}
+
+impl<T> fmt::Debug for Id<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "#{}", self.index)
+    }
+}
+
+impl<T> PartialEq for Id<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.index == other.index
+    }
+}
+
+impl<T> Eq for Id<T> {}
+
+impl<T> PartialOrd for Id<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.index.partial_cmp(&other.index)
+    }
+}
+
+impl<T> Ord for Id<T> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.index.cmp(&other.index)
+    }
+}
+
+impl<T> Hash for Id<T> {
+    fn hash<H: Hasher>(&self, hasher: &mut H) {
+        self.index.hash(hasher);
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Off<T> {
+    pub(crate) id: Id<T>,
+    pub(crate) offset: u32,
+}
+
+impl<T> Off<T> {
+    pub(crate) fn new(id: Id<T>, offset: u32) -> Self {
+        Self { id, offset }
+    }
+}
+
+pub(crate) struct Range<T> {
+    start: Id<T>,
+    stop: Id<T>,
+}
+
+impl<T> Range<T> {
+    pub(crate) fn new(start: Id<T>, stop: Id<T>) -> Self {
+        Self { start, stop }
+    }
+}
+
+impl<T> Clone for Range<T> {
+    fn clone(&self) -> Self {
+        let start = self.start;
+        let stop = self.stop;
+        Self { start, stop }
+    }
+}
+
+impl<T> Copy for Range<T> {}
+
+impl<T> fmt::Debug for Range<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}-{:?}", self.start, self.stop)
+    }
+}
+
+impl<T> IntoIterator for Range<T> {
+    type Item = Id<T>;
+    type IntoIter = RangeIterator<T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        let start = self.start;
+        let stop = self.stop;
+        let _phantom = PhantomData;
+        RangeIterator {
+            start,
+            stop,
+            _phantom,
+        }
+    }
+}
+
+pub(crate) struct RangeIterator<T> {
+    start: Id<T>,
+    stop: Id<T>,
+    _phantom: PhantomData<T>,
+}
+
+impl<T> Iterator for RangeIterator<T> {
+    type Item = Id<T>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.start == self.stop {
+            return None;
+        }
+        let next = self.start;
+        self.start.index += 1;
+        Some(next)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let size = (self.stop.index - self.start.index) as usize;
+        (size, Some(size))
+    }
+}
+
+impl<T> ExactSizeIterator for RangeIterator<T> {}
+
+#[derive(Debug)]
+pub(crate) struct Block<T>(Vec<T>);
+
+impl<T> Block<T> {
+    #[inline(always)]
+    pub(crate) fn len(&self) -> Id<T> {
+        let len = self.0.len();
+        Id::new(len as u32)
+    }
+
+    pub(crate) fn ensure_capacity<F>(&mut self, max: Id<T>, f: F)
+    where
+        F: FnMut() -> T,
+    {
+        let index = max.index as usize + 1;
+        if self.0.len() <= index {
+            self.0.resize_with(index, f);
+        }
+    }
+
+    pub(crate) fn range(&self) -> Range<T> {
+        Range::new(Id::new(0), self.len())
+    }
+
+    pub(crate) fn truncate(&mut self, len: Id<T>) {
+        self.0.truncate(len.index as usize);
+    }
+
+    pub(crate) fn push(&mut self, t: T) {
+        self.0.push(t);
+    }
+
+    pub(crate) fn pop(&mut self) -> Option<T> {
+        self.0.pop()
+    }
+}
+
+impl<T> Default for Block<T> {
+    fn default() -> Self {
+        Self(vec![])
+    }
+}
+
+impl<T> Index<Id<T>> for Block<T> {
+    type Output = T;
+    #[inline(always)]
+    fn index(&self, id: Id<T>) -> &Self::Output {
+        debug_assert!(id < self.len());
+        let index = id.index as usize;
+        unsafe { self.0.get_unchecked(index) }
+    }
+}
+
+impl<T> IndexMut<Id<T>> for Block<T> {
+    #[inline(always)]
+    fn index_mut(&mut self, id: Id<T>) -> &mut Self::Output {
+        debug_assert!(id < self.len());
+        let index = id.index as usize;
+        unsafe { self.0.get_unchecked_mut(index) }
+    }
+}
+
+impl<T> Index<Range<T>> for Block<T> {
+    type Output = [T];
+    #[inline(always)]
+    fn index(&self, range: Range<T>) -> &Self::Output {
+        debug_assert!(range.start < self.len());
+        debug_assert!(range.stop <= self.len());
+        let start = range.start.index as usize;
+        let stop = range.stop.index as usize;
+        unsafe { self.0.get_unchecked(start..stop) }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct BlockMap<K, V> {
+    pub(crate) block: Block<V>,
+    _phantom: PhantomData<K>,
+}
+
+impl<K, V> Index<Id<K>> for BlockMap<K, V> {
+    type Output = V;
+    #[inline(always)]
+    fn index(&self, id: Id<K>) -> &Self::Output {
+        let id = Id::new(id.index);
+        &self.block[id]
+    }
+}
+
+impl<K, V> IndexMut<Id<K>> for BlockMap<K, V> {
+    #[inline(always)]
+    fn index_mut(&mut self, id: Id<K>) -> &mut Self::Output {
+        let id = Id::new(id.index);
+        &mut self.block[id]
+    }
+}
+
+impl<K, V> Default for BlockMap<K, V> {
+    fn default() -> Self {
+        let block = Block::default();
+        let _phantom = PhantomData;
+        Self { block, _phantom }
+    }
+}
