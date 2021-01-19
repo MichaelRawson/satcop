@@ -1,5 +1,4 @@
 use std::fmt;
-use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 use std::ops::{Index, IndexMut};
 
@@ -9,6 +8,7 @@ pub(crate) struct Id<T> {
 }
 
 impl<T> Id<T> {
+    #[inline]
     pub(crate) fn new(index: u32) -> Self {
         let _phantom = PhantomData;
         Self { index, _phantom }
@@ -16,6 +16,7 @@ impl<T> Id<T> {
 }
 
 impl<T> Clone for Id<T> {
+    #[inline]
     fn clone(&self) -> Self {
         Self::new(self.index)
     }
@@ -30,6 +31,7 @@ impl<T> fmt::Debug for Id<T> {
 }
 
 impl<T> PartialEq for Id<T> {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
         self.index == other.index
     }
@@ -38,20 +40,16 @@ impl<T> PartialEq for Id<T> {
 impl<T> Eq for Id<T> {}
 
 impl<T> PartialOrd for Id<T> {
+    #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         self.index.partial_cmp(&other.index)
     }
 }
 
 impl<T> Ord for Id<T> {
+    #[inline]
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.index.cmp(&other.index)
-    }
-}
-
-impl<T> Hash for Id<T> {
-    fn hash<H: Hasher>(&self, hasher: &mut H) {
-        self.index.hash(hasher);
     }
 }
 
@@ -62,6 +60,7 @@ pub(crate) struct Off<T> {
 }
 
 impl<T> Off<T> {
+    #[inline]
     pub(crate) fn new(id: Id<T>, offset: u32) -> Self {
         Self { id, offset }
     }
@@ -73,12 +72,19 @@ pub(crate) struct Range<T> {
 }
 
 impl<T> Range<T> {
+    #[inline]
     pub(crate) fn new(start: Id<T>, stop: Id<T>) -> Self {
         Self { start, stop }
+    }
+
+    #[inline]
+    pub(crate) fn len(&self) -> u32 {
+        self.stop.index - self.start.index
     }
 }
 
 impl<T> Clone for Range<T> {
+    #[inline]
     fn clone(&self) -> Self {
         let start = self.start;
         let stop = self.stop;
@@ -98,6 +104,7 @@ impl<T> IntoIterator for Range<T> {
     type Item = Id<T>;
     type IntoIter = RangeIterator<T>;
 
+    #[inline]
     fn into_iter(self) -> Self::IntoIter {
         let start = self.start;
         let stop = self.stop;
@@ -119,6 +126,7 @@ pub(crate) struct RangeIterator<T> {
 impl<T> Iterator for RangeIterator<T> {
     type Item = Id<T>;
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         if self.start == self.stop {
             return None;
@@ -128,6 +136,7 @@ impl<T> Iterator for RangeIterator<T> {
         Some(next)
     }
 
+    #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
         let size = (self.stop.index - self.start.index) as usize;
         (size, Some(size))
@@ -140,7 +149,7 @@ impl<T> ExactSizeIterator for RangeIterator<T> {}
 pub(crate) struct Block<T>(Vec<T>);
 
 impl<T> Block<T> {
-    #[inline(always)]
+    #[inline]
     pub(crate) fn len(&self) -> Id<T> {
         let len = self.0.len();
         Id::new(len as u32)
@@ -156,24 +165,29 @@ impl<T> Block<T> {
         }
     }
 
+    #[inline]
     pub(crate) fn range(&self) -> Range<T> {
         Range::new(Id::new(0), self.len())
     }
 
+    #[inline]
     pub(crate) fn truncate(&mut self, len: Id<T>) {
         self.0.truncate(len.index as usize);
     }
 
+    #[inline]
     pub(crate) fn push(&mut self, t: T) {
         self.0.push(t);
     }
 
+    #[inline]
     pub(crate) fn pop(&mut self) -> Option<T> {
         self.0.pop()
     }
 }
 
 impl<T> Default for Block<T> {
+    #[inline]
     fn default() -> Self {
         Self(vec![])
     }
@@ -181,7 +195,7 @@ impl<T> Default for Block<T> {
 
 impl<T> Index<Id<T>> for Block<T> {
     type Output = T;
-    #[inline(always)]
+    #[inline]
     fn index(&self, id: Id<T>) -> &Self::Output {
         debug_assert!(id < self.len());
         let index = id.index as usize;
@@ -190,7 +204,7 @@ impl<T> Index<Id<T>> for Block<T> {
 }
 
 impl<T> IndexMut<Id<T>> for Block<T> {
-    #[inline(always)]
+    #[inline]
     fn index_mut(&mut self, id: Id<T>) -> &mut Self::Output {
         debug_assert!(id < self.len());
         let index = id.index as usize;
@@ -200,7 +214,7 @@ impl<T> IndexMut<Id<T>> for Block<T> {
 
 impl<T> Index<Range<T>> for Block<T> {
     type Output = [T];
-    #[inline(always)]
+    #[inline]
     fn index(&self, range: Range<T>) -> &Self::Output {
         debug_assert!(range.start < self.len());
         debug_assert!(range.stop <= self.len());
@@ -218,7 +232,7 @@ pub(crate) struct BlockMap<K, V> {
 
 impl<K, V> Index<Id<K>> for BlockMap<K, V> {
     type Output = V;
-    #[inline(always)]
+    #[inline]
     fn index(&self, id: Id<K>) -> &Self::Output {
         let id = Id::new(id.index);
         &self.block[id]
@@ -226,7 +240,7 @@ impl<K, V> Index<Id<K>> for BlockMap<K, V> {
 }
 
 impl<K, V> IndexMut<Id<K>> for BlockMap<K, V> {
-    #[inline(always)]
+    #[inline]
     fn index_mut(&mut self, id: Id<K>) -> &mut Self::Output {
         let id = Id::new(id.index);
         &mut self.block[id]
@@ -234,6 +248,7 @@ impl<K, V> IndexMut<Id<K>> for BlockMap<K, V> {
 }
 
 impl<K, V> Default for BlockMap<K, V> {
+    #[inline]
     fn default() -> Self {
         let block = Block::default();
         let _phantom = PhantomData;

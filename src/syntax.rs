@@ -84,6 +84,10 @@ impl Trm {
         self.0 < 0
     }
 
+    pub(crate) fn is_sym(&self) -> bool {
+        self.0 >= 0
+    }
+
     pub(crate) fn as_var(&self) -> Var {
         Var(-self.0 as u32)
     }

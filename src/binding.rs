@@ -44,19 +44,15 @@ impl Bindings {
         term
     }
 
-    pub(crate) fn unify(
+    pub(crate) fn args_unify(
         &mut self,
         syms: &Block<Sym>,
         terms: &Block<Trm>,
+        sym: Id<Sym>,
         mut left: Off<Trm>,
         mut right: Off<Trm>,
     ) -> bool {
-        let lsym = terms[left.id].as_sym();
-        let rsym = terms[right.id].as_sym();
-        if lsym != rsym {
-            return false;
-        }
-        let arity = syms[lsym].arity;
+        let arity = syms[sym].arity;
         for _ in 0..arity {
             left.id.index += 1;
             right.id.index += 1;
@@ -74,7 +70,37 @@ impl Bindings {
                 if !self.try_bind(syms, terms, x, s) {
                     return false;
                 }
-            } else if !self.unify(syms, terms, s, t) {
+            } else {
+                let ssym = terms[s.id].as_sym();
+                let tsym = terms[t.id].as_sym();
+                if ssym != tsym || !self.args_unify(syms, terms, ssym, s, t) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    pub(crate) fn args_equal(
+        &mut self,
+        syms: &Block<Sym>,
+        terms: &Block<Trm>,
+        mut left: Off<Trm>,
+        mut right: Off<Trm>,
+    ) -> bool {
+        let sym = terms[left.id].as_sym();
+        let arity = syms[sym].arity;
+        for _ in 0..arity {
+            left.id.index += 1;
+            right.id.index += 1;
+            let s = Off::new(terms[left.id].as_arg(), left.offset);
+            let t = Off::new(terms[right.id].as_arg(), right.offset);
+            let s = self.resolve(terms, s);
+            let t = self.resolve(terms, t);
+            if terms[s.id] != terms[t.id] {
+                return false;
+            }
+            if terms[s.id].is_sym() && !self.args_equal(syms, terms, s, t) {
                 return false;
             }
         }

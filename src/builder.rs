@@ -37,6 +37,13 @@ impl Builder {
         if self.has_equality {
             self.add_equality_axioms();
         }
+        for id in self.matrix.syms.range() {
+            for pol in 0..2 {
+                let index = &mut self.matrix.index[id].pol[pol];
+                let clauses = &self.matrix.clauses;
+                index.sort_unstable_by_key(|pos| clauses[pos.cls].lits.len());
+            }
+        }
         self.matrix
     }
 

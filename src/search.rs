@@ -1,7 +1,7 @@
 use crate::binding::Bindings;
 use crate::block::{Block, Id, Off};
-use crate::matrix::{Matrix, Pos};
-use crate::syntax::{Cls, Lit, Var};
+use crate::matrix::Matrix;
+use crate::syntax::{Cls, Lit, Trm, Var};
 
 #[derive(Debug)]
 struct Path {
@@ -9,10 +9,16 @@ struct Path {
     parent: Id<Path>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 struct Goal {
     lit: Off<Lit>,
     path: Id<Path>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Constraint {
+    left: Off<Trm>,
+    right: Off<Trm>,
 }
 
 pub(crate) struct Search<'matrix> {
@@ -20,6 +26,7 @@ pub(crate) struct Search<'matrix> {
     bindings: Bindings,
     path: Block<Path>,
     todo: Vec<Goal>,
+    constraints: Vec<Constraint>,
     offset: u32,
     limit: u32,
 }
@@ -33,6 +40,7 @@ impl<'matrix> Search<'matrix> {
             parent: Id::new(0),
         });
         let todo = vec![];
+        let constraints = vec![];
         let offset = 0;
         let limit = 0;
         Self {
@@ -40,6 +48,7 @@ impl<'matrix> Search<'matrix> {
             bindings,
             path,
             todo,
+            constraints,
             offset,
             limit,
         }
@@ -58,9 +67,9 @@ impl<'matrix> Search<'matrix> {
     fn start(&mut self, id: Id<Cls>) {
         let cls = &self.matrix.clauses[id];
         let path = Id::new(0);
-        for lit in cls.lits {
+        for id in cls.lits {
             self.todo.push(Goal {
-                lit: Off::new(lit, 0),
+                lit: Off::new(id, self.offset),
                 path,
             });
         }
@@ -71,8 +80,18 @@ impl<'matrix> Search<'matrix> {
         self.todo.clear();
     }
 
-    #[inline(never)]
     fn prove(&mut self) {
+        for constraint in &self.constraints {
+            if self.bindings.args_equal(
+                &self.matrix.syms,
+                &self.matrix.terms,
+                constraint.left,
+                constraint.right,
+            ) {
+                return;
+            }
+        }
+
         let goal = if let Some(goal) = self.todo.pop() {
             goal
         } else {
@@ -80,21 +99,43 @@ impl<'matrix> Search<'matrix> {
             std::process::exit(0);
         };
 
+        let undo_regularity = self.constraints.len();
         let undo_bindings = self.bindings.mark();
-        let lit = self.matrix.lits[goal.lit.id];
+        let offset = goal.lit.offset;
+        let Lit { pol, atom } = self.matrix.lits[goal.lit.id];
+        let sym = self.matrix.terms[atom].as_sym();
+        let left = Off::new(atom, offset);
 
+        // reductions
         let mut path_len = 0;
         let mut path = goal.path;
         while path.index != 0 {
-            let path_lit = self.path[path].lit;
-            if self.matrix.lits[path_lit.id].pol != lit.pol {
-                self.reduce(goal.lit, path_lit);
+            let path_data = self.path[path].lit;
+            let path_lit = self.matrix.lits[path_data.id];
+            let path_sym = self.matrix.terms[path_lit.atom].as_sym();
+            path = self.path[path].parent;
+            path_len += 1;
+            if path_sym != sym {
+                continue;
+            }
+
+            let right = Off::new(path_lit.atom, path_data.offset);
+            if path_lit.pol != pol {
+                if self.bindings.args_unify(
+                    &self.matrix.syms,
+                    &self.matrix.terms,
+                    sym,
+                    left,
+                    right,
+                ) {
+                    self.prove();
+                }
                 self.bindings.undo_to_mark(undo_bindings);
             }
-            path_len += 1;
-            path = self.path[path].parent;
+            self.constraints.push(Constraint { left, right });
         }
 
+        // extensions
         if path_len < self.limit {
             let undo_todo = self.todo.len();
             let path = self.path.len();
@@ -102,55 +143,33 @@ impl<'matrix> Search<'matrix> {
                 lit: goal.lit,
                 parent: goal.path,
             });
-            let sym = self.matrix.terms[lit.atom].as_sym();
-            for pos in &self.matrix.index[sym].pol[!lit.pol as usize] {
-                self.extend(goal, *pos, path);
+            for pos in &self.matrix.index[sym].pol[!pol as usize] {
+                let cls = self.matrix.clauses[pos.cls];
+                self.bindings.ensure_capacity(Var(self.offset + cls.vars));
+                if self.bindings.args_unify(
+                    &self.matrix.syms,
+                    &self.matrix.terms,
+                    sym,
+                    Off::new(atom, offset),
+                    Off::new(self.matrix.lits[pos.lit].atom, self.offset),
+                ) {
+                    for id in cls.lits {
+                        if id != pos.lit {
+                            let lit = Off::new(id, self.offset);
+                            self.todo.push(Goal { path, lit });
+                        }
+                    }
+                    self.offset += cls.vars;
+                    self.prove();
+                    self.offset -= cls.vars;
+                    self.todo.truncate(undo_todo);
+                }
                 self.bindings.undo_to_mark(undo_bindings);
-                self.todo.truncate(undo_todo);
             }
             self.path.pop();
         }
 
+        self.constraints.truncate(undo_regularity);
         self.todo.push(goal);
-    }
-
-    #[inline(always)]
-    fn reduce(&mut self, lit: Off<Lit>, path: Off<Lit>) {
-        if self.bindings.unify(
-            &self.matrix.syms,
-            &self.matrix.terms,
-            Off::new(self.matrix.lits[lit.id].atom, lit.offset),
-            Off::new(self.matrix.lits[path.id].atom, path.offset),
-        ) {
-            self.prove();
-        }
-    }
-
-    #[inline(always)]
-    fn extend(&mut self, goal: Goal, pos: Pos, path: Id<Path>) {
-        let cls = self.matrix.clauses[pos.cls];
-        self.bindings.ensure_capacity(Var(self.offset + cls.vars));
-        if !self.bindings.unify(
-            &self.matrix.syms,
-            &self.matrix.terms,
-            Off::new(self.matrix.lits[goal.lit.id].atom, goal.lit.offset),
-            Off::new(self.matrix.lits[pos.lit].atom, self.offset),
-        ) {
-            return;
-        }
-
-        for id in cls.lits {
-            if id == pos.lit {
-                continue;
-            }
-            self.todo.push(Goal {
-                path,
-                lit: Off::new(id, self.offset)
-            });
-        }
-        self.offset += cls.vars;
-        self.prove();
-
-        self.offset -= cls.vars;
     }
 }
