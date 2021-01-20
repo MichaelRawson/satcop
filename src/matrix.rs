@@ -1,6 +1,8 @@
 use crate::block::{Block, BlockMap, Id};
 use crate::syntax::{Cls, Info, Lit, Sym, Trm};
 
+pub(crate) const EQUALITY: Id<Sym> = Id::new(0);
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Pos {
     pub(crate) cls: Id<Cls>,

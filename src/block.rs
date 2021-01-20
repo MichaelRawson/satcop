@@ -1,4 +1,5 @@
 use std::fmt;
+use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 use std::ops::{Index, IndexMut};
 
@@ -9,7 +10,7 @@ pub(crate) struct Id<T> {
 
 impl<T> Id<T> {
     #[inline]
-    pub(crate) fn new(index: u32) -> Self {
+    pub(crate) const fn new(index: u32) -> Self {
         let _phantom = PhantomData;
         Self { index, _phantom }
     }
@@ -50,6 +51,13 @@ impl<T> Ord for Id<T> {
     #[inline]
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.index.cmp(&other.index)
+    }
+}
+
+impl<T> Hash for Id<T> {
+    #[inline]
+    fn hash<H: Hasher>(&self, hasher: &mut H) {
+        self.index.hash(hasher);
     }
 }
 
@@ -176,8 +184,10 @@ impl<T> Block<T> {
     }
 
     #[inline]
-    pub(crate) fn push(&mut self, t: T) {
+    pub(crate) fn push(&mut self, t: T) -> Id<T> {
+        let id = self.len();
         self.0.push(t);
+        id
     }
 
     #[inline]
@@ -221,6 +231,17 @@ impl<T> Index<Range<T>> for Block<T> {
         let start = range.start.index as usize;
         let stop = range.stop.index as usize;
         unsafe { self.0.get_unchecked(start..stop) }
+    }
+}
+
+impl<T> IndexMut<Range<T>> for Block<T> {
+    #[inline]
+    fn index_mut(&mut self, range: Range<T>) -> &mut Self::Output {
+        debug_assert!(range.start < self.len());
+        debug_assert!(range.stop <= self.len());
+        let start = range.start.index as usize;
+        let stop = range.stop.index as usize;
+        unsafe { self.0.get_unchecked_mut(start..stop) }
     }
 }
 

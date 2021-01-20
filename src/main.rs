@@ -5,6 +5,8 @@ mod matrix;
 mod options;
 mod pp;
 mod search;
+mod sharing;
+mod smt;
 mod syntax;
 mod tptp;
 mod tstp;

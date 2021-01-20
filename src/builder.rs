@@ -1,26 +1,29 @@
-use crate::block::{Id, Range};
+use crate::block::{Block, Id, Range};
 use crate::matrix::*;
+use crate::sharing::Sharing;
 use crate::syntax::*;
-use fnv::FnvHashMap;
 use std::rc::Rc;
 
 pub(crate) struct Builder {
     matrix: Matrix,
-    vars: FnvHashMap<Var, Id<Trm>>,
-    funs: FnvHashMap<Vec<Trm>, Id<Trm>>,
+    vars: Vec<Id<Trm>>,
+    sharing: Sharing<u32, Id<Trm>>,
+    scratch: Block<Trm>,
     has_equality: bool,
 }
 
 impl Default for Builder {
     fn default() -> Self {
         let matrix = Matrix::default();
-        let vars = FnvHashMap::default();
-        let funs = FnvHashMap::default();
+        let vars = vec![];
+        let sharing = Sharing::default();
+        let scratch = Block::default();
         let has_equality = false;
         let mut result = Self {
             matrix,
             vars,
-            funs,
+            sharing,
+            scratch,
             has_equality,
         };
         result.sym(Sym {
@@ -48,8 +51,7 @@ impl Builder {
     }
 
     pub(crate) fn sym(&mut self, sym: Sym) -> Id<Sym> {
-        let id = self.matrix.syms.len();
-        self.matrix.syms.push(sym);
+        let id = self.matrix.syms.push(sym);
         self.matrix.index.block.push(Entry {
             pol: [vec![], vec![]],
         });
@@ -59,49 +61,46 @@ impl Builder {
     fn term(&mut self, term: Term) -> Id<Trm> {
         match term {
             Term::Var(x) => {
-                let id = self.matrix.terms.len();
-                let matrix = &mut self.matrix;
-                *self.vars.entry(x).or_insert_with(|| {
-                    matrix.terms.push(Trm::var(x));
-                    id
-                })
+                let Var(y) = x;
+                let y = y as usize;
+                if y >= self.vars.len() {
+                    let matrix = &mut self.matrix;
+                    self.vars
+                        .resize_with(y + 1, || matrix.terms.push(Trm::var(x)));
+                }
+                self.vars[y]
             }
             Term::Fun(f, ts) => {
-                let mut args = vec![];
+                let mut node = self.sharing.start();
+                let record = self.scratch.push(Trm::sym(f));
+                node = self.sharing.next(node, f.index);
                 for t in ts {
-                    args.push(Trm::arg(self.term(t)));
+                    let arg = self.term(t);
+                    self.scratch.push(Trm::arg(arg));
+                    node = self.sharing.next(node, arg.index);
                 }
                 let id = self.matrix.terms.len();
-                self.matrix.terms.push(Trm::sym(f));
-                for arg in args {
-                    self.matrix.terms.push(arg);
-                }
-                let range = Range::new(id, self.matrix.terms.len());
-                let slice = &self.matrix.terms[range];
-                match self.funs.get(slice) {
-                    Some(result) => {
-                        self.matrix.terms.truncate(id);
-                        *result
-                    }
-                    None => {
-                        self.funs.insert(slice.into(), id);
-                        id
+                let shared = self.sharing.finish(node, id);
+                if id == shared {
+                    for recorded in Range::new(record, self.scratch.len()) {
+                        self.matrix.terms.push(self.scratch[recorded]);
                     }
                 }
+                self.scratch.truncate(record);
+                shared
             }
         }
     }
 
     fn literal(&mut self, cls: Id<Cls>, literal: CNFLiteral) -> Id<Lit> {
-        let id = self.matrix.lits.len();
         let pol = literal.pol;
         let atom = self.term(literal.atom);
         let symbol = self.matrix.terms[atom].as_sym();
-        if Sym::is_eq(symbol) {
+        if symbol == EQUALITY {
             self.has_equality = true;
         }
+        let id = self.matrix.lits.push(Lit { pol, atom });
         self.matrix.index[symbol].pol[pol as usize].push(Pos { cls, lit: id });
-        self.matrix.lits.push(Lit { pol, atom });
         id
     }
 
@@ -126,12 +125,11 @@ impl Builder {
     }
 
     fn add_equality_axioms(&mut self) {
-        let eq = Id::new(0);
         self.clause(
             CNFFormula(vec![CNFLiteral {
                 pol: true,
                 atom: Term::Fun(
-                    eq,
+                    EQUALITY,
                     vec![Term::Var(Var(1)), Term::Var(Var(1))],
                 ),
             }]),
@@ -147,14 +145,14 @@ impl Builder {
                 CNFLiteral {
                     pol: false,
                     atom: Term::Fun(
-                        eq,
+                        EQUALITY,
                         vec![Term::Var(Var(1)), Term::Var(Var(2))],
                     ),
                 },
                 CNFLiteral {
                     pol: true,
                     atom: Term::Fun(
-                        eq,
+                        EQUALITY,
                         vec![Term::Var(Var(2)), Term::Var(Var(1))],
                     ),
                 },
@@ -171,21 +169,21 @@ impl Builder {
                 CNFLiteral {
                     pol: false,
                     atom: Term::Fun(
-                        eq,
+                        EQUALITY,
                         vec![Term::Var(Var(1)), Term::Var(Var(2))],
                     ),
                 },
                 CNFLiteral {
                     pol: false,
                     atom: Term::Fun(
-                        eq,
+                        EQUALITY,
                         vec![Term::Var(Var(2)), Term::Var(Var(3))],
                     ),
                 },
                 CNFLiteral {
                     pol: true,
                     atom: Term::Fun(
-                        eq,
+                        EQUALITY,
                         vec![Term::Var(Var(1)), Term::Var(Var(3))],
                     ),
                 },
@@ -213,7 +211,10 @@ impl Builder {
                 let v2 = Var(2 * i + 2);
                 lits.push(CNFLiteral {
                     pol: false,
-                    atom: Term::Fun(eq, vec![Term::Var(v1), Term::Var(v2)]),
+                    atom: Term::Fun(
+                        EQUALITY,
+                        vec![Term::Var(v1), Term::Var(v2)],
+                    ),
                 });
                 args1.push(Term::Var(v1));
                 args2.push(Term::Var(v2));
@@ -224,7 +225,7 @@ impl Builder {
                 Sort::Obj => {
                     lits.push(CNFLiteral {
                         pol: true,
-                        atom: Term::Fun(eq, vec![t1, t2]),
+                        atom: Term::Fun(EQUALITY, vec![t1, t2]),
                     });
                 }
                 Sort::Bool => {

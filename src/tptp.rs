@@ -1,5 +1,5 @@
 use crate::block::Id;
-use crate::matrix::Matrix;
+use crate::matrix::*;
 use crate::options::Options;
 use crate::pp::PreProcessor;
 use crate::syntax;
@@ -255,7 +255,7 @@ impl Loader {
             }
             DefinedAtomicFormula::Infix(infix) => {
                 syntax::Atom::Pred(syntax::Term::Fun(
-                    Id::new(0),
+                    EQUALITY,
                     vec![
                         self.fof_term(*infix.left, syntax::Sort::Obj)?,
                         self.fof_term(*infix.right, syntax::Sort::Obj)?,
@@ -287,7 +287,7 @@ impl Loader {
         infix: InfixUnary,
     ) -> anyhow::Result<syntax::Formula> {
         Ok(syntax::Formula::Atom(syntax::Atom::Pred(syntax::Term::Fun(
-            Id::new(0),
+            EQUALITY,
             vec![
                 self.fof_term(*infix.left, syntax::Sort::Obj)?,
                 self.fof_term(*infix.right, syntax::Sort::Obj)?,

@@ -37,12 +37,6 @@ pub(crate) struct Sym {
     pub(crate) name: Name,
 }
 
-impl Sym {
-    pub(crate) fn is_eq(id: Id<Sym>) -> bool {
-        id.index == 0
-    }
-}
-
 impl fmt::Debug for Sym {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}/{}", self.name, self.arity)
