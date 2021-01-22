@@ -1,8 +1,11 @@
+mod dpll;
+
 use crate::binding::Bindings;
 use crate::block::{Block, Id, Off, Range};
 use crate::matrix::Matrix;
 use crate::sharing::Sharing;
 use crate::syntax;
+use dpll::{Lit, DPLL};
 use fnv::FnvHashMap;
 
 #[derive(Debug, Clone, Copy)]
@@ -11,21 +14,16 @@ struct Trm(u32);
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Atom(Id<Trm>);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-struct Lit {
-    pol: bool,
-    atom: Id<Atom>,
-}
-
 const VAR: Id<Trm> = Id::new(0);
 
 pub(crate) struct Solver {
+    dpll: DPLL,
     terms: Block<Trm>,
-    term_scratch: Block<Trm>,
+    term_scratch: Vec<Trm>,
     term_sharing: Sharing<u32, Id<Trm>>,
     atoms: Block<Atom>,
     atom_map: FnvHashMap<Id<Trm>, Id<Atom>>,
-    literals: Block<Lit>,
+    lit_scratch: Vec<Lit>,
     clause_sharing: Sharing<Lit, Id<Lit>>,
 }
 
@@ -35,13 +33,10 @@ impl Solver {
         matrix: &Matrix,
         bindings: &Bindings,
         clause: Off<syntax::Cls>,
-    ) {
-        let clause =
-            if let Some(clause) = self.clause(matrix, bindings, clause) {
-                clause
-            } else {
-                return;
-            };
+    ) -> bool {
+        self.clause(matrix, bindings, clause)
+            .map(|clause| self.dpll.assert(clause))
+            .unwrap_or(true)
     }
 
     fn clause(
@@ -50,23 +45,42 @@ impl Solver {
         bindings: &Bindings,
         clause: Off<syntax::Cls>,
     ) -> Option<Range<Lit>> {
-        let start = self.literals.len();
         for lit in matrix.clauses[clause.id].lits {
             self.literal(matrix, bindings, Off::new(lit, clause.offset));
         }
-        let stop = self.literals.len();
-        let clause = Range::new(start, stop);
-        self.literals[clause].sort_unstable();
-        let mut node = self.clause_sharing.start();
-        for id in clause {
-            node = self.clause_sharing.next(node, self.literals[id]);
+        self.lit_scratch.sort_unstable();
+        self.lit_scratch.dedup();
+        let mut last_atom = None;
+        let mut tautology = false;
+        for lit in &self.lit_scratch {
+            if Some(lit.atom) == last_atom {
+                tautology = true;
+                break;
+            }
+            last_atom = Some(lit.atom);
         }
+        if tautology {
+            self.lit_scratch.clear();
+            return None;
+        }
+
+        let mut node = self.clause_sharing.start();
+        for lit in &self.lit_scratch {
+            node = self.clause_sharing.next(node, *lit);
+        }
+        let start = self.dpll.literals.len();
         let shared = self.clause_sharing.finish(node, start);
         if start == shared {
-            return Some(clause);
+            for lit in self.lit_scratch.drain(..) {
+                self.dpll.literals.push(lit);
+            }
+            let stop = self.dpll.literals.len();
+            let clause = Range::new(start, stop);
+            Some(clause)
+        } else {
+            self.lit_scratch.clear();
+            None
         }
-        self.literals.truncate(start);
-        None
     }
 
     fn literal(
@@ -77,7 +91,7 @@ impl Solver {
     ) {
         let syntax::Lit { pol, atom } = matrix.lits[lit.id];
         let atom = self.atom(matrix, bindings, Off::new(atom, lit.offset));
-        self.literals.push(Lit { pol, atom });
+        self.lit_scratch.push(Lit { pol, atom });
     }
 
     pub(crate) fn atom(
@@ -88,10 +102,12 @@ impl Solver {
     ) -> Id<Atom> {
         let term = self.term(matrix, bindings, atom);
         let atoms = &mut self.atoms;
-        *self
-            .atom_map
-            .entry(term)
-            .or_insert_with(|| atoms.push(Atom(term)))
+        let dpll = &mut self.dpll;
+        *self.atom_map.entry(term).or_insert_with(|| {
+            let id = atoms.push(Atom(term));
+            dpll.new_atom(id);
+            id
+        })
     }
 
     fn term(
@@ -102,7 +118,8 @@ impl Solver {
     ) -> Id<Trm> {
         let sym = matrix.terms[term.id].as_sym();
         let mut node = self.term_sharing.start();
-        let record = self.term_scratch.push(Trm(sym.index));
+        let record = self.term_scratch.len();
+        self.term_scratch.push(Trm(sym.index));
         node = self.term_sharing.next(node, sym.index);
         let arity = matrix.syms[sym].arity;
         for _ in 0..arity {
@@ -121,32 +138,33 @@ impl Solver {
         let id = self.terms.len();
         let shared = self.term_sharing.finish(node, id);
         if id == shared {
-            for recorded in Range::new(record, self.term_scratch.len()) {
-                self.terms.push(self.term_scratch[recorded]);
+            for item in self.term_scratch.drain(record..) {
+                self.terms.push(item);
             }
         }
-        self.term_scratch.truncate(record);
         shared
     }
 }
 
 impl Default for Solver {
     fn default() -> Self {
+        let dpll = DPLL::default();
         let mut terms = Block::default();
         terms.push(Trm(0));
-        let term_scratch = Block::default();
+        let term_scratch = vec![];
         let term_sharing = Sharing::default();
         let atoms = Block::default();
         let atom_map = FnvHashMap::default();
-        let literals = Block::default();
+        let lit_scratch = vec![];
         let clause_sharing = Sharing::default();
         Self {
+            dpll,
             terms,
             term_scratch,
             term_sharing,
             atoms,
             atom_map,
-            literals,
+            lit_scratch,
             clause_sharing,
         }
     }

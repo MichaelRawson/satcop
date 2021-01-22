@@ -41,8 +41,8 @@ impl<'matrix> Search<'matrix> {
         let bindings = Bindings::default();
         let mut path = Block::default();
         path.push(Path {
-            lit: Off::new(Id::new(0), 0),
-            parent: Id::new(0),
+            lit: Off::new(Id::default(), 0),
+            parent: Id::default(),
         });
         let todo = vec![];
         let constraints = vec![];
@@ -76,7 +76,7 @@ impl<'matrix> Search<'matrix> {
 
     fn start(&mut self, id: Id<Cls>) {
         let cls = &self.matrix.clauses[id];
-        let path = Id::new(0);
+        let path = Id::default();
         for id in cls.lits {
             self.todo.push(Goal {
                 lit: Off::new(id, self.offset),
@@ -93,6 +93,13 @@ impl<'matrix> Search<'matrix> {
     }
 
     fn prove(&mut self) {
+        for clause in &self.clauses {
+            if !self.solver.assert(self.matrix, &self.bindings, *clause) {
+                println!("% SZS status Unsatisfiable");
+                std::process::exit(0);
+            }
+        }
+
         self.steps += 1;
         for constraint in &self.constraints {
             if self.bindings.args_equal(
@@ -108,9 +115,7 @@ impl<'matrix> Search<'matrix> {
         let goal = if let Some(goal) = self.todo.pop() {
             goal
         } else {
-            //dbg!(self.steps);
-            println!("% SZS status Theorem");
-            std::process::exit(0);
+            panic!("should not be here, should be unsat");
         };
 
         let undo_regularity = self.constraints.len();
@@ -182,12 +187,6 @@ impl<'matrix> Search<'matrix> {
                 self.bindings.undo_to_mark(undo_bindings);
             }
             self.path.pop();
-        }
-        // leaves of search
-        else {
-            for clause in &self.clauses {
-                self.solver.assert(self.matrix, &self.bindings, *clause);
-            }
         }
 
         self.constraints.truncate(undo_regularity);

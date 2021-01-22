@@ -25,6 +25,12 @@ impl<T> Clone for Id<T> {
 
 impl<T> Copy for Id<T> {}
 
+impl<T> Default for Id<T> {
+    fn default() -> Self {
+        Id::new(0)
+    }
+}
+
 impl<T> fmt::Debug for Id<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "#{}", self.index)
@@ -75,8 +81,8 @@ impl<T> Off<T> {
 }
 
 pub(crate) struct Range<T> {
-    start: Id<T>,
-    stop: Id<T>,
+    pub(crate) start: Id<T>,
+    pub(crate) stop: Id<T>,
 }
 
 impl<T> Range<T> {
@@ -175,7 +181,7 @@ impl<T> Block<T> {
 
     #[inline]
     pub(crate) fn range(&self) -> Range<T> {
-        Range::new(Id::new(0), self.len())
+        Range::new(Id::default(), self.len())
     }
 
     #[inline]
@@ -249,6 +255,25 @@ impl<T> IndexMut<Range<T>> for Block<T> {
 pub(crate) struct BlockMap<K, V> {
     pub(crate) block: Block<V>,
     _phantom: PhantomData<K>,
+}
+
+impl<K, V> BlockMap<K, V> {
+    #[inline]
+    pub(crate) fn len(&self) -> Id<K> {
+        Id::new(self.block.len().index)
+    }
+
+    #[inline]
+    pub(crate) fn range(&self) -> Range<K> {
+        Range::new(Id::default(), self.len())
+    }
+
+    pub(crate) fn ensure_capacity<F>(&mut self, max: Id<K>, f: F)
+    where
+        F: FnMut() -> V,
+    {
+        self.block.ensure_capacity(Id::new(max.index), f);
+    }
 }
 
 impl<K, V> Index<Id<K>> for BlockMap<K, V> {
