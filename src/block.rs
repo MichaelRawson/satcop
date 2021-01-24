@@ -67,7 +67,7 @@ impl<T> Hash for Id<T> {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct Off<T> {
     pub(crate) id: Id<T>,
     pub(crate) offset: u32,

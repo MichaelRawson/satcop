@@ -93,13 +93,6 @@ impl<'matrix> Search<'matrix> {
     }
 
     fn prove(&mut self) {
-        for clause in &self.clauses {
-            if !self.solver.assert(self.matrix, &self.bindings, *clause) {
-                println!("% SZS status Unsatisfiable");
-                std::process::exit(0);
-            }
-        }
-
         self.steps += 1;
         for constraint in &self.constraints {
             if self.bindings.args_equal(
@@ -111,11 +104,32 @@ impl<'matrix> Search<'matrix> {
                 return;
             }
         }
+        for clause in &self.clauses {
+            self.solver.assert(self.matrix, &self.bindings, *clause);
+        }
+        if !self.solver.solve() {
+            println!("% SZS status Unsatisfiable");
+            std::process::exit(0);
+        }
 
         let goal = if let Some(goal) = self.todo.pop() {
             goal
+        /*
+        if self.solver.assigned_true(
+            &self.matrix,
+            &self.bindings,
+            goal.lit,
+        ) {
+            goal
         } else {
-            panic!("should not be here, should be unsat");
+            //println!("skipping solved goal");
+            self.prove();
+            self.todo.push(goal);
+            return;
+        }
+        */
+        } else {
+            return;
         };
 
         let undo_regularity = self.constraints.len();

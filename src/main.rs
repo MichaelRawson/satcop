@@ -5,10 +5,10 @@ mod matrix;
 mod options;
 mod pp;
 mod search;
-mod sharing;
 mod smt;
 mod syntax;
 mod tptp;
+mod trie;
 mod tstp;
 
 use crate::options::Options;

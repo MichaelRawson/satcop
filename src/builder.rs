@@ -1,14 +1,14 @@
-use crate::block::{Block, Id, Range};
+use crate::block::{BlockMap, Id, Range};
 use crate::matrix::*;
-use crate::sharing::Sharing;
 use crate::syntax::*;
+use crate::trie::Trie;
 use std::rc::Rc;
 
 pub(crate) struct Builder {
     matrix: Matrix,
     vars: Vec<Id<Trm>>,
-    sharing: Sharing<u32, Id<Trm>>,
-    scratch: Block<Trm>,
+    args: Vec<Id<Trm>>,
+    sharing: BlockMap<Sym, Trie<Id<Trm>, Id<Trm>>>,
     has_equality: bool,
 }
 
@@ -16,14 +16,14 @@ impl Default for Builder {
     fn default() -> Self {
         let matrix = Matrix::default();
         let vars = vec![];
-        let sharing = Sharing::default();
-        let scratch = Block::default();
+        let args = vec![];
+        let sharing = BlockMap::default();
         let has_equality = false;
         let mut result = Self {
             matrix,
             vars,
+            args,
             sharing,
-            scratch,
             has_equality,
         };
         result.sym(Sym {
@@ -55,6 +55,7 @@ impl Builder {
         self.matrix.index.block.push(Entry {
             pol: [vec![], vec![]],
         });
+        self.sharing.ensure_capacity(id, Default::default);
         id
     }
 
@@ -71,23 +72,26 @@ impl Builder {
                 self.vars[y]
             }
             Term::Fun(f, ts) => {
-                let mut node = self.sharing.start();
-                let record = self.scratch.push(Trm::sym(f));
-                node = self.sharing.next(node, f.index);
+                let record = self.args.len();
                 for t in ts {
-                    let arg = self.term(t);
-                    self.scratch.push(Trm::arg(arg));
-                    node = self.sharing.next(node, arg.index);
+                    let t = self.term(t);
+                    self.args.push(t);
                 }
+
                 let id = self.matrix.terms.len();
-                let shared = self.sharing.finish(node, id);
-                if id == shared {
-                    for recorded in Range::new(record, self.scratch.len()) {
-                        self.matrix.terms.push(self.scratch[recorded]);
-                    }
+                self.matrix.terms.push(Trm::sym(f));
+                let mut node = &mut self.sharing[f];
+                for arg in self.args.drain(record..) {
+                    self.matrix.terms.push(Trm::arg(arg));
+                    node = node.next(arg);
                 }
-                self.scratch.truncate(record);
-                shared
+                if let Some(shared) = node.value {
+                    self.matrix.terms.truncate(id);
+                    shared
+                } else {
+                    node.value = Some(id);
+                    id
+                }
             }
         }
     }
