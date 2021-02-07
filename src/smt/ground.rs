@@ -1,20 +1,20 @@
 use super::{Atom, Lit, Trm};
 use crate::binding::Bindings;
 use crate::block::{Block, BlockMap, Id, Off, Range};
+use crate::digest::{Digest, DigestMap, DigestSet};
 use crate::matrix::Matrix;
 use crate::syntax;
-use crate::trie::Trie;
 
 const VAR: Id<Trm> = Id::new(0);
 
 pub(crate) struct Ground {
     terms: Block<Trm>,
     args: Vec<Id<Trm>>,
-    term_sharing: BlockMap<syntax::Sym, Trie<Id<Trm>, Id<Trm>>>,
+    term_sharing: DigestMap<Id<Trm>>,
     pub(crate) atom_counter: Id<Atom>,
     atom_map: BlockMap<Trm, Option<Id<Atom>>>,
     pub(crate) literals: Block<Lit>,
-    clause_sharing: Trie<Lit, ()>,
+    clause_cache: DigestSet,
 }
 
 impl Default for Ground {
@@ -22,11 +22,11 @@ impl Default for Ground {
         let mut terms = Block::default();
         terms.push(Trm(0));
         let args = vec![];
-        let term_sharing = BlockMap::default();
+        let term_sharing = DigestMap::default();
         let atom_counter = Id::default();
         let atom_map = BlockMap::default();
         let literals = Block::default();
-        let clause_sharing = Trie::default();
+        let clause_cache = DigestSet::default();
         Self {
             terms,
             args,
@@ -34,7 +34,7 @@ impl Default for Ground {
             atom_counter,
             atom_map,
             literals,
-            clause_sharing,
+            clause_cache
         }
     }
 }
@@ -54,15 +54,17 @@ impl Ground {
         }
         let stop = self.literals.len();
         let clause = Range::new(start, stop);
-        let mut node = &mut self.clause_sharing;
+        let mut digest = Digest::default();
         for lit in clause {
-            node = node.next(self.literals[lit]);
+            let Lit { pol, atom } = self.literals[lit];
+            digest.update(pol);
+            digest.update(atom.index);
         }
-        if node.value.is_some() {
+        if self.clause_cache.contains(&digest) {
             self.literals.truncate(start);
             None
         } else {
-            node.value = Some(());
+            self.clause_cache.insert(digest);
             Some(clause)
         }
     }
@@ -119,18 +121,18 @@ impl Ground {
             self.args.push(arg);
         }
         let id = self.terms.len();
-        self.term_sharing.ensure_capacity(sym, Default::default);
         self.terms.push(Trm(sym.index));
-        let mut node = &mut self.term_sharing[sym];
+        let mut digest = Digest::default();
+        digest.update(sym.index);
         for arg in self.args.drain(record..) {
             self.terms.push(Trm(arg.index));
-            node = node.next(arg);
+            digest.update(arg.index);
         }
-        if let Some(shared) = node.value {
+        if let Some(shared) = self.term_sharing.get(&digest) {
             self.terms.truncate(id);
-            shared
+            *shared
         } else {
-            node.value = Some(id);
+            self.term_sharing.insert(digest, id);
             id
         }
     }

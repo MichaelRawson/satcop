@@ -23,8 +23,8 @@ pub(crate) struct Lit {
 
 #[derive(Default)]
 pub(crate) struct Solver {
-    ground: Ground,
     dpll: DPLL,
+    ground: Ground,
 }
 
 impl Solver {
@@ -44,13 +44,17 @@ impl Solver {
         self.dpll.solve(&self.ground.literals)
     }
 
-    pub(crate) fn assigned_true(
+    pub(crate) fn assigned_false(
         &mut self,
         matrix: &Matrix,
         bindings: &Bindings,
         lit: Off<syntax::Lit>,
     ) -> bool {
         let lit = self.ground.literal(matrix, bindings, lit);
-        self.dpll.assigned_true(lit)
+        self.dpll.assigned_false(lit)
+    }
+
+    pub(crate) fn has_restarted(&mut self) -> bool {
+        std::mem::take(&mut self.dpll.restarted)
     }
 }

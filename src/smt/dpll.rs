@@ -13,15 +13,21 @@ struct Decision {
     backtrack: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct Propagation {
+    lit: Id<Lit>,
+}
+
 #[derive(Default)]
 pub(crate) struct DPLL {
+    pub(crate) restarted: bool,
     solved: bool,
     units: Vec<Id<Lit>>,
     clauses: Block<Cls>,
     assignment: BlockMap<Atom, Option<bool>>,
     watch: BlockMap<Atom, [Vec<Id<Cls>>; 2]>,
     trail: Vec<Decision>,
-    propagating: Vec<Id<Lit>>,
+    propagating: Vec<Propagation>,
     next: Id<Atom>,
 }
 
@@ -78,8 +84,8 @@ impl DPLL {
         true
     }
 
-    pub(crate) fn assigned_true(&self, lit: Lit) -> bool {
-        self.assignment[lit.atom] == Some(lit.pol)
+    pub(crate) fn assigned_false(&self, lit: Lit) -> bool {
+        self.assignment[lit.atom] != Some(lit.pol)
     }
 
     fn restart(&mut self) {
@@ -89,8 +95,9 @@ impl DPLL {
         }
         self.next = Id::default();
         for unit in &self.units {
-            self.propagating.push(*unit);
+            self.propagating.push(Propagation { lit: *unit });
         }
+        self.restarted = true;
     }
 
     fn backtrack(&mut self, block: &Block<Lit>) -> bool {
@@ -108,8 +115,8 @@ impl DPLL {
     }
 
     fn propagate(&mut self, block: &Block<Lit>) -> bool {
-        while let Some(id) = self.propagating.pop() {
-            let Lit { atom, pol } = block[id];
+        while let Some(Propagation { lit }) = self.propagating.pop() {
+            let Lit { atom, pol } = block[lit];
             if self.assignment[atom] == Some(!pol) {
                 return false;
             }
@@ -149,7 +156,7 @@ impl DPLL {
                 self.watch[atom][pol as usize].push(id);
             } else {
                 if self.assignment[block[feasible].atom].is_none() {
-                    self.propagating.push(feasible);
+                    self.propagating.push(Propagation { lit: feasible });
                 }
                 i += 1;
             }

@@ -1,14 +1,14 @@
-use crate::block::{BlockMap, Id, Range};
+use crate::block::{Id, Range};
 use crate::matrix::*;
+use crate::digest::{Digest, DigestMap};
 use crate::syntax::*;
-use crate::trie::Trie;
 use std::rc::Rc;
 
 pub(crate) struct Builder {
     matrix: Matrix,
     vars: Vec<Id<Trm>>,
     args: Vec<Id<Trm>>,
-    sharing: BlockMap<Sym, Trie<Id<Trm>, Id<Trm>>>,
+    terms: DigestMap<Id<Trm>>,
     has_equality: bool,
 }
 
@@ -17,13 +17,13 @@ impl Default for Builder {
         let matrix = Matrix::default();
         let vars = vec![];
         let args = vec![];
-        let sharing = BlockMap::default();
+        let terms = DigestMap::default();
         let has_equality = false;
         let mut result = Self {
             matrix,
             vars,
             args,
-            sharing,
+            terms,
             has_equality,
         };
         result.sym(Sym {
@@ -55,7 +55,6 @@ impl Builder {
         self.matrix.index.block.push(Entry {
             pol: [vec![], vec![]],
         });
-        self.sharing.ensure_capacity(id, Default::default);
         id
     }
 
@@ -80,16 +79,17 @@ impl Builder {
 
                 let id = self.matrix.terms.len();
                 self.matrix.terms.push(Trm::sym(f));
-                let mut node = &mut self.sharing[f];
+                let mut digest = Digest::default();
+                digest.update(f.index);
                 for arg in self.args.drain(record..) {
                     self.matrix.terms.push(Trm::arg(arg));
-                    node = node.next(arg);
+                    digest.update(arg.index);
                 }
-                if let Some(shared) = node.value {
+                if let Some(shared) = self.terms.get(&digest) {
                     self.matrix.terms.truncate(id);
-                    shared
+                    *shared
                 } else {
-                    node.value = Some(id);
+                    self.terms.insert(digest, id);
                     id
                 }
             }

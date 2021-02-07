@@ -70,7 +70,9 @@ impl<'matrix> Search<'matrix> {
             for start in &self.matrix.start {
                 self.start(*start);
             }
-            self.limit += 1;
+            if !self.solver.has_restarted() {
+                self.limit += 1;
+            }
         }
     }
 
@@ -114,23 +116,17 @@ impl<'matrix> Search<'matrix> {
 
         let goal = if let Some(goal) = self.todo.pop() {
             goal
-        /*
-        if self.solver.assigned_true(
-            &self.matrix,
-            &self.bindings,
-            goal.lit,
-        ) {
-            goal
         } else {
-            //println!("skipping solved goal");
+            return;
+        };
+        if self
+            .solver
+            .assigned_false(self.matrix, &self.bindings, goal.lit)
+        {
             self.prove();
             self.todo.push(goal);
             return;
         }
-        */
-        } else {
-            return;
-        };
 
         let undo_regularity = self.constraints.len();
         let undo_bindings = self.bindings.mark();

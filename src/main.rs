@@ -1,6 +1,7 @@
 mod binding;
 mod block;
 mod builder;
+mod digest;
 mod matrix;
 mod options;
 mod pp;
@@ -8,7 +9,6 @@ mod search;
 mod smt;
 mod syntax;
 mod tptp;
-mod trie;
 mod tstp;
 
 use crate::options::Options;
