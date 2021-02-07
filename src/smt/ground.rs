@@ -8,12 +8,11 @@ use crate::syntax;
 const VAR: Id<Trm> = Id::new(0);
 
 pub(crate) struct Ground {
+    pub(crate) atom_counter: Id<Atom>,
     terms: Block<Trm>,
     args: Vec<Id<Trm>>,
     term_sharing: DigestMap<Id<Trm>>,
-    pub(crate) atom_counter: Id<Atom>,
     atom_map: BlockMap<Trm, Option<Id<Atom>>>,
-    pub(crate) literals: Block<Lit>,
     clause_cache: DigestSet,
 }
 
@@ -25,16 +24,14 @@ impl Default for Ground {
         let term_sharing = DigestMap::default();
         let atom_counter = Id::default();
         let atom_map = BlockMap::default();
-        let literals = Block::default();
         let clause_cache = DigestSet::default();
         Self {
+            atom_counter,
             terms,
             args,
             term_sharing,
-            atom_counter,
             atom_map,
-            literals,
-            clause_cache
+            clause_cache,
         }
     }
 }
@@ -42,26 +39,43 @@ impl Default for Ground {
 impl Ground {
     pub(crate) fn clause(
         &mut self,
+        literals: &mut Block<Lit>,
         matrix: &Matrix,
         bindings: &Bindings,
         clause: Off<syntax::Cls>,
     ) -> Option<Range<Lit>> {
-        let start = self.literals.len();
-        for lit in matrix.clauses[clause.id].lits {
+        let start = literals.len();
+        let mut discard_clause = false;
+        'next: for lit in matrix.clauses[clause.id].lits {
             let lit =
                 self.literal(matrix, bindings, Off::new(lit, clause.offset));
-            self.literals.push(lit);
+            for id in Range::new(start, literals.len()) {
+                let other = literals[id];
+                if other.atom == lit.atom {
+                    if other.pol == lit.pol {
+                        continue 'next;
+                    } else {
+                        discard_clause = true;
+                    }
+                }
+            }
+            literals.push(lit);
         }
-        let stop = self.literals.len();
+        if discard_clause {
+            literals.truncate(start);
+            return None;
+        }
+
+        let stop = literals.len();
         let clause = Range::new(start, stop);
         let mut digest = Digest::default();
         for lit in clause {
-            let Lit { pol, atom } = self.literals[lit];
+            let Lit { pol, atom } = literals[lit];
             digest.update(pol);
             digest.update(atom.index);
         }
         if self.clause_cache.contains(&digest) {
-            self.literals.truncate(start);
+            literals.truncate(start);
             None
         } else {
             self.clause_cache.insert(digest);

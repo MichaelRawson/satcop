@@ -25,6 +25,7 @@ struct Constraint {
 pub(crate) struct Search<'matrix> {
     matrix: &'matrix Matrix,
     solver: smt::Solver,
+    asserted_new_clause: bool,
     bindings: Bindings,
     path: Block<Path>,
     todo: Vec<Goal>,
@@ -38,6 +39,7 @@ pub(crate) struct Search<'matrix> {
 impl<'matrix> Search<'matrix> {
     pub(crate) fn new(matrix: &'matrix Matrix) -> Self {
         let solver = smt::Solver::default();
+        let asserted_new_clause = false;
         let bindings = Bindings::default();
         let mut path = Block::default();
         path.push(Path {
@@ -53,6 +55,7 @@ impl<'matrix> Search<'matrix> {
         Self {
             matrix,
             solver,
+            asserted_new_clause,
             bindings,
             path,
             todo,
@@ -67,10 +70,11 @@ impl<'matrix> Search<'matrix> {
     pub(crate) fn go(&mut self) {
         self.limit = 0;
         loop {
+            self.asserted_new_clause = false;
             for start in &self.matrix.start {
                 self.start(*start);
             }
-            if !self.solver.has_restarted() {
+            if !self.asserted_new_clause {
                 self.limit += 1;
             }
         }
@@ -106,10 +110,13 @@ impl<'matrix> Search<'matrix> {
                 return;
             }
         }
+        let mut new_clause = false;
         for clause in &self.clauses {
-            self.solver.assert(self.matrix, &self.bindings, *clause);
+            new_clause |=
+                self.solver.assert(self.matrix, &self.bindings, *clause);
         }
-        if !self.solver.solve() {
+        self.asserted_new_clause |= new_clause;
+        if new_clause && !self.solver.solve() {
             println!("% SZS status Unsatisfiable");
             std::process::exit(0);
         }
@@ -119,6 +126,8 @@ impl<'matrix> Search<'matrix> {
         } else {
             return;
         };
+
+        // check the goal and everything on the path is (assigned) true
         if self
             .solver
             .assigned_false(self.matrix, &self.bindings, goal.lit)
@@ -126,6 +135,19 @@ impl<'matrix> Search<'matrix> {
             self.prove();
             self.todo.push(goal);
             return;
+        }
+        let mut path = goal.path;
+        while path.index != 0 {
+            if self.solver.assigned_false(
+                self.matrix,
+                &self.bindings,
+                self.path[path].lit,
+            ) {
+                self.prove();
+                self.todo.push(goal);
+                return;
+            }
+            path = self.path[path].parent;
         }
 
         let undo_regularity = self.constraints.len();

@@ -2,7 +2,7 @@ mod dpll;
 mod ground;
 
 use crate::binding::Bindings;
-use crate::block::{Id, Off};
+use crate::block::{Block, Id, Off};
 use crate::matrix::Matrix;
 use crate::syntax;
 
@@ -23,6 +23,7 @@ pub(crate) struct Lit {
 
 #[derive(Default)]
 pub(crate) struct Solver {
+    literals: Block<Lit>,
     dpll: DPLL,
     ground: Ground,
 }
@@ -33,15 +34,33 @@ impl Solver {
         matrix: &Matrix,
         bindings: &Bindings,
         clause: Off<syntax::Cls>,
-    ) {
-        if let Some(clause) = self.ground.clause(matrix, bindings, clause) {
-            self.dpll.max_atom(self.ground.atom_counter);
-            self.dpll.assert(&self.ground.literals, clause);
+    ) -> bool {
+        let grounded =
+            self.ground
+                .clause(&mut self.literals, matrix, bindings, clause);
+        self.dpll.max_atom(self.ground.atom_counter);
+        if let Some(clause) = grounded {
+            self.dpll.assert(&self.literals, clause);
+            true
+        } else {
+            false
         }
     }
 
     pub(crate) fn solve(&mut self) -> bool {
-        self.dpll.solve(&self.ground.literals)
+        'restart: loop {
+            self.dpll.restart();
+            if self.dpll.propagate(&self.literals).is_some() {
+                return false;
+            }
+            while self.dpll.tiebreak(&self.literals) {
+                if let Some(conflict) = self.dpll.propagate(&self.literals) {
+                    self.dpll.analyze_conflict(&mut self.literals, conflict);
+                    continue 'restart;
+                }
+            }
+            return true;
+        }
     }
 
     pub(crate) fn assigned_false(
@@ -52,9 +71,5 @@ impl Solver {
     ) -> bool {
         let lit = self.ground.literal(matrix, bindings, lit);
         self.dpll.assigned_false(lit)
-    }
-
-    pub(crate) fn has_restarted(&mut self) -> bool {
-        std::mem::take(&mut self.dpll.restarted)
     }
 }
