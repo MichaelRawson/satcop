@@ -3,6 +3,9 @@ use crate::block::{Block, Id, Off};
 use crate::matrix::Matrix;
 use crate::smt;
 use crate::syntax::{Cls, Lit, Trm, Var};
+use rand::rngs::SmallRng;
+use rand::seq::SliceRandom;
+use rand::SeedableRng;
 
 #[derive(Debug)]
 struct Path {
@@ -24,6 +27,7 @@ struct Constraint {
 
 pub(crate) struct Search<'matrix> {
     matrix: &'matrix Matrix,
+    rng: SmallRng,
     solver: smt::Solver,
     asserted_new_clause: bool,
     bindings: Bindings,
@@ -38,6 +42,7 @@ pub(crate) struct Search<'matrix> {
 
 impl<'matrix> Search<'matrix> {
     pub(crate) fn new(matrix: &'matrix Matrix) -> Self {
+        let rng = SmallRng::seed_from_u64(0);
         let solver = smt::Solver::default();
         let asserted_new_clause = false;
         let bindings = Bindings::default();
@@ -54,6 +59,7 @@ impl<'matrix> Search<'matrix> {
         let steps = 0;
         Self {
             matrix,
+            rng,
             solver,
             asserted_new_clause,
             bindings,
@@ -89,6 +95,7 @@ impl<'matrix> Search<'matrix> {
                 path,
             });
         }
+        self.todo.shuffle(&mut self.rng);
         self.clauses.push(Off::new(id, self.offset));
         self.bindings.ensure_capacity(Var(self.offset + cls.vars));
         self.offset = cls.vars;
@@ -110,6 +117,7 @@ impl<'matrix> Search<'matrix> {
                 return;
             }
         }
+
         let mut new_clause = false;
         for clause in &self.clauses {
             new_clause |=
@@ -204,12 +212,14 @@ impl<'matrix> Search<'matrix> {
                     Off::new(self.matrix.lits[pos.lit].atom, self.offset),
                 ) {
                     self.clauses.push(Off::new(pos.cls, self.offset));
+                    let start = self.todo.len();
                     for id in cls.lits {
                         if id != pos.lit {
                             let lit = Off::new(id, self.offset);
                             self.todo.push(Goal { path, lit });
                         }
                     }
+                    self.todo[start..].shuffle(&mut self.rng);
                     self.offset += cls.vars;
                     self.prove();
                     self.offset -= cls.vars;

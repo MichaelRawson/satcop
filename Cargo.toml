@@ -13,3 +13,7 @@ fnv = "1.0"
 memmap = "0.7"
 thiserror = "1.0"
 tptp = "0.28"
+
+[dependencies.rand]
+version = "0.8"
+features = ["small_rng"]
