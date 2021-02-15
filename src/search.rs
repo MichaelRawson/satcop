@@ -195,41 +195,43 @@ impl<'matrix> Search<'matrix> {
         }
 
         // extensions
-        if path_len < self.limit {
-            let undo_todo = self.todo.len();
-            let path = self.path.push(Path {
-                lit: goal.lit,
-                parent: goal.path,
-            });
-            for pos in &self.matrix.index[sym].pol[!pol as usize] {
-                let cls = self.matrix.clauses[pos.cls];
-                self.bindings.ensure_capacity(Var(self.offset + cls.vars));
-                if self.bindings.args_unify(
-                    &self.matrix.syms,
-                    &self.matrix.terms,
-                    sym,
-                    Off::new(atom, offset),
-                    Off::new(self.matrix.lits[pos.lit].atom, self.offset),
-                ) {
-                    self.clauses.push(Off::new(pos.cls, self.offset));
-                    let start = self.todo.len();
-                    for id in cls.lits {
-                        if id != pos.lit {
-                            let lit = Off::new(id, self.offset);
-                            self.todo.push(Goal { path, lit });
-                        }
-                    }
-                    self.todo[start..].shuffle(&mut self.rng);
-                    self.offset += cls.vars;
-                    self.prove();
-                    self.offset -= cls.vars;
-                    self.todo.truncate(undo_todo);
-                    self.clauses.pop();
-                }
-                self.bindings.undo_to_mark(undo_bindings);
+        let undo_todo = self.todo.len();
+        let path = self.path.push(Path {
+            lit: goal.lit,
+            parent: goal.path,
+        });
+        for pos in &self.matrix.index[sym].pol[!pol as usize] {
+            let cls = self.matrix.clauses[pos.cls];
+            if path_len + self.todo.len() as u32 + cls.lits.len() > self.limit
+            {
+                continue;
             }
-            self.path.pop();
+            self.bindings.ensure_capacity(Var(self.offset + cls.vars));
+            if self.bindings.args_unify(
+                &self.matrix.syms,
+                &self.matrix.terms,
+                sym,
+                Off::new(atom, offset),
+                Off::new(self.matrix.lits[pos.lit].atom, self.offset),
+            ) {
+                self.clauses.push(Off::new(pos.cls, self.offset));
+                let start = self.todo.len();
+                for id in cls.lits {
+                    if id != pos.lit {
+                        let lit = Off::new(id, self.offset);
+                        self.todo.push(Goal { path, lit });
+                    }
+                }
+                self.todo[start..].shuffle(&mut self.rng);
+                self.offset += cls.vars;
+                self.prove();
+                self.offset -= cls.vars;
+                self.todo.truncate(undo_todo);
+                self.clauses.pop();
+            }
+            self.bindings.undo_to_mark(undo_bindings);
         }
+        self.path.pop();
 
         self.constraints.truncate(undo_regularity);
         self.todo.push(goal);

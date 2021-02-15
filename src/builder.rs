@@ -1,6 +1,6 @@
 use crate::block::{Id, Range};
-use crate::matrix::*;
 use crate::digest::{Digest, DigestMap};
+use crate::matrix::*;
 use crate::syntax::*;
 use std::rc::Rc;
 

@@ -126,12 +126,7 @@ impl DPLL {
         self.assert(literals, Range::new(start, stop));
     }
 
-    fn resolve(
-        &mut self,
-        literals: &Block<Lit>,
-        on: Lit,
-        reason: Range<Lit>,
-    ) {
+    fn resolve(&mut self, literals: &Block<Lit>, on: Lit, reason: Range<Lit>) {
         for other in reason {
             let other = literals[other];
             if other.atom != on.atom
