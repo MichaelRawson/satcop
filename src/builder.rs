@@ -202,6 +202,9 @@ impl Builder {
         let cong_name: Rc<str> = "congruence".into();
         for id in self.matrix.syms.range() {
             let sym = &self.matrix.syms[id];
+            if !sym.name.needs_congruence() {
+                continue;
+            }
             let arity = sym.arity;
             let sort = sym.sort;
             if arity == 0 {

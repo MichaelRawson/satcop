@@ -23,6 +23,7 @@ pub(crate) struct Lit {
 
 #[derive(Default)]
 pub(crate) struct Solver {
+    empty_clause: bool,
     literals: Block<Lit>,
     dpll: DPLL,
     ground: Ground,
@@ -40,6 +41,10 @@ impl Solver {
                 .clause(&mut self.literals, matrix, bindings, clause);
         self.dpll.max_atom(self.ground.atom_counter);
         if let Some(clause) = grounded {
+            if clause.len() == 0 {
+                self.empty_clause = true;
+                return true;
+            }
             self.dpll.assert(&self.literals, clause);
             true
         } else {
@@ -48,6 +53,9 @@ impl Solver {
     }
 
     pub(crate) fn solve(&mut self) -> bool {
+        if self.empty_clause {
+            return false;
+        }
         'restart: loop {
             self.dpll.restart();
             if self.dpll.propagate(&self.literals).is_some() {

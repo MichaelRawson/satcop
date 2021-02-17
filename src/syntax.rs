@@ -31,6 +31,12 @@ impl fmt::Display for Name {
     }
 }
 
+impl Name {
+    pub(crate) fn needs_congruence(&self) -> bool {
+        !matches!(self, Name::Equality | Name::Definition(_))
+    }
+}
+
 pub(crate) struct Sym {
     pub(crate) arity: u32,
     pub(crate) sort: Sort,
@@ -202,11 +208,20 @@ pub(crate) enum Source {
     EqualityAxiom,
     File(Rc<str>),
 }
+
 #[derive(Debug, Clone)]
 pub(crate) struct Info {
     pub(crate) source: Source,
     pub(crate) name: Rc<str>,
     pub(crate) is_goal: bool,
+}
+
+impl Info {
+    pub(crate) fn clone_nongoal(&self) -> Self {
+        let mut clone = self.clone();
+        clone.is_goal = false;
+        clone
+    }
 }
 
 pub(crate) struct CNFLiteral {
