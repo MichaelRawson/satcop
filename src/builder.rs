@@ -65,8 +65,9 @@ impl Builder {
                 let y = *y as usize;
                 if y >= self.vars.len() {
                     let matrix = &mut self.matrix;
-                    self.vars
-                        .resize_with(y + 1, || matrix.terms.push(Trm::var(*x)));
+                    self.vars.resize_with(y + 1, || {
+                        matrix.terms.push(Trm::var(*x))
+                    });
                 }
                 self.vars[y]
             }
@@ -102,6 +103,12 @@ impl Builder {
         let symbol = self.matrix.terms[atom].as_sym();
         if symbol == EQUALITY {
             self.has_equality = true;
+            if pol {
+                let left = self.matrix.terms[Id::new(atom.index + 1)].as_arg();
+                let right =
+                    self.matrix.terms[Id::new(atom.index + 2)].as_arg();
+                self.matrix.diseqs.push(DisEq { left, right });
+            }
         }
         let id = self.matrix.lits.push(Lit { pol, atom });
         self.matrix.index[symbol].pol[pol as usize].push(Pos { cls, lit: id });
@@ -113,18 +120,40 @@ impl Builder {
         clause: CNFFormula,
         vars: u32,
         info: Info,
+        constraints: bool
     ) {
         let id = self.matrix.clauses.len();
-        let start = self.matrix.lits.len();
+        let lstart = self.matrix.lits.len();
+        let dstart = self.matrix.diseqs.len();
         for literal in clause.0 {
             self.literal(id, literal);
         }
-        let stop = self.matrix.lits.len();
-        let lits = Range::new(start, stop);
+        let lstop = self.matrix.lits.len();
+        let dstop = self.matrix.diseqs.len();
+        let lits = Range::new(lstart, lstop);
+        for id1 in lits {
+            let lit1 = self.matrix.lits[id1];
+            for id2 in Range::new(Id::new(id1.index + 1), lstop) {
+                let lit2 = self.matrix.lits[id2];
+                if lit1.pol != lit2.pol {
+                    let left = lit1.atom;
+                    let right = lit2.atom;
+                    let sym1 = self.matrix.terms[left];
+                    let sym2 = self.matrix.terms[right];
+                    if sym1 == sym2 {
+                        self.matrix.diseqs.push(DisEq { left, right });
+                    }
+                }
+            }
+        }
+        if !constraints {
+            self.matrix.diseqs.truncate(dstart);
+        }
+        let diseqs = Range::new(dstart, dstop);
         if info.is_goal {
             self.matrix.start.push(id);
         }
-        self.matrix.clauses.push(Cls { lits, vars });
+        self.matrix.clauses.push(Cls { vars, lits, diseqs });
         self.matrix.info.block.push(info);
     }
 
@@ -146,6 +175,7 @@ impl Builder {
                 name: "reflexivity".into(),
                 is_goal: false,
             },
+            false
         );
         self.clause(
             CNFFormula(vec![
@@ -170,6 +200,7 @@ impl Builder {
                 name: "symmetry".into(),
                 is_goal: false,
             },
+            true
         );
         self.clause(
             CNFFormula(vec![
@@ -182,17 +213,11 @@ impl Builder {
                 },
                 CNFLiteral {
                     pol: false,
-                    atom: Rc::new(Term::Fun(
-                        EQUALITY,
-                        vec![v2, v3.clone()],
-                    )),
+                    atom: Rc::new(Term::Fun(EQUALITY, vec![v2, v3.clone()])),
                 },
                 CNFLiteral {
                     pol: true,
-                    atom: Rc::new(Term::Fun(
-                        EQUALITY,
-                        vec![v1, v3],
-                    )),
+                    atom: Rc::new(Term::Fun(EQUALITY, vec![v1, v3])),
                 },
             ]),
             3,
@@ -201,6 +226,7 @@ impl Builder {
                 name: "transitivity".into(),
                 is_goal: false,
             },
+            true
         );
         let cong_name: Rc<str> = "congruence".into();
         for id in self.matrix.syms.range() {
@@ -221,7 +247,10 @@ impl Builder {
                 let v2 = Rc::new(Term::Var(Var(2 * i + 2)));
                 lits.push(CNFLiteral {
                     pol: false,
-                    atom: Rc::new(Term::Fun(EQUALITY, vec![v1.clone(), v2.clone()])),
+                    atom: Rc::new(Term::Fun(
+                        EQUALITY,
+                        vec![v1.clone(), v2.clone()],
+                    )),
                 });
                 args1.push(v1.clone());
                 args2.push(v2.clone());
@@ -254,6 +283,7 @@ impl Builder {
                     name: cong_name.clone(),
                     is_goal: false,
                 },
+                true
             );
         }
     }

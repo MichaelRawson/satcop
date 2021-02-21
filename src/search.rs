@@ -37,7 +37,6 @@ pub(crate) struct Search<'matrix> {
     clauses: Vec<Off<Cls>>,
     offset: u32,
     limit: u32,
-    steps: u64,
 }
 
 impl<'matrix> Search<'matrix> {
@@ -56,7 +55,6 @@ impl<'matrix> Search<'matrix> {
         let clauses = vec![];
         let offset = 0;
         let limit = 0;
-        let steps = 0;
         Self {
             matrix,
             rng,
@@ -69,7 +67,6 @@ impl<'matrix> Search<'matrix> {
             clauses,
             offset,
             limit,
-            steps,
         }
     }
 
@@ -106,9 +103,21 @@ impl<'matrix> Search<'matrix> {
     }
 
     fn prove(&mut self) {
-        self.steps += 1;
+        for cls in &self.clauses {
+            let diseqs = self.matrix.clauses[cls.id].diseqs;
+            for diseq in &self.matrix.diseqs[diseqs] {
+                if self.bindings.equal(
+                    &self.matrix.syms,
+                    &self.matrix.terms,
+                    Off::new(diseq.left, cls.offset),
+                    Off::new(diseq.right, cls.offset),
+                ) {
+                    return;
+                }
+            }
+        }
         for constraint in &self.constraints {
-            if self.bindings.args_equal(
+            if self.bindings.equal(
                 &self.matrix.syms,
                 &self.matrix.terms,
                 constraint.left,
@@ -180,10 +189,9 @@ impl<'matrix> Search<'matrix> {
 
             let right = Off::new(path_lit.atom, path_data.offset);
             if path_lit.pol != pol {
-                if self.bindings.args_unify(
+                if self.bindings.unify(
                     &self.matrix.syms,
                     &self.matrix.terms,
-                    sym,
                     left,
                     right,
                 ) {
@@ -191,7 +199,9 @@ impl<'matrix> Search<'matrix> {
                 }
                 self.bindings.undo_to_mark(undo_bindings);
             }
-            self.constraints.push(Constraint { left, right });
+            else {
+                self.constraints.push(Constraint { left, right });
+            }
         }
 
         // extensions
@@ -201,16 +211,15 @@ impl<'matrix> Search<'matrix> {
             parent: goal.path,
         });
         for pos in &self.matrix.index[sym].pol[!pol as usize] {
-            let cls = self.matrix.clauses[pos.cls];
+            let cls = &self.matrix.clauses[pos.cls];
             if path_len + self.todo.len() as u32 + cls.lits.len() > self.limit
             {
                 continue;
             }
             self.bindings.ensure_capacity(Var(self.offset + cls.vars));
-            if self.bindings.args_unify(
+            if self.bindings.unify(
                 &self.matrix.syms,
                 &self.matrix.terms,
-                sym,
                 Off::new(atom, offset),
                 Off::new(self.matrix.lits[pos.lit].atom, self.offset),
             ) {

@@ -88,6 +88,7 @@ pub(crate) struct Range<T> {
 impl<T> Range<T> {
     #[inline]
     pub(crate) fn new(start: Id<T>, stop: Id<T>) -> Self {
+        debug_assert!(start <= stop);
         Self { start, stop }
     }
 
@@ -232,7 +233,7 @@ impl<T> Index<Range<T>> for Block<T> {
     type Output = [T];
     #[inline]
     fn index(&self, range: Range<T>) -> &Self::Output {
-        debug_assert!(range.start < self.len());
+        debug_assert!(range.start <= range.stop);
         debug_assert!(range.stop <= self.len());
         let start = range.start.index as usize;
         let stop = range.stop.index as usize;
@@ -243,7 +244,7 @@ impl<T> Index<Range<T>> for Block<T> {
 impl<T> IndexMut<Range<T>> for Block<T> {
     #[inline]
     fn index_mut(&mut self, range: Range<T>) -> &mut Self::Output {
-        debug_assert!(range.start < self.len());
+        debug_assert!(range.start <= range.stop);
         debug_assert!(range.stop <= self.len());
         let start = range.start.index as usize;
         let stop = range.stop.index as usize;

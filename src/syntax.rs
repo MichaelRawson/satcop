@@ -123,9 +123,16 @@ impl fmt::Debug for Lit {
 }
 
 #[derive(Clone, Copy, Debug)]
+pub(crate) struct DisEq {
+    pub(crate) left: Id<Trm>,
+    pub(crate) right: Id<Trm>,
+}
+
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct Cls {
-    pub(crate) lits: Range<Lit>,
     pub(crate) vars: u32,
+    pub(crate) lits: Range<Lit>,
+    pub(crate) diseqs: Range<DisEq>,
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]

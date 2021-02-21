@@ -1,5 +1,5 @@
 use crate::block::{Block, BlockMap, Id};
-use crate::syntax::{Cls, Info, Lit, Sym, Trm};
+use crate::syntax::{Cls, DisEq, Info, Lit, Sym, Trm};
 
 pub(crate) const EQUALITY: Id<Sym> = Id::new(0);
 
@@ -19,6 +19,7 @@ pub(crate) struct Matrix {
     pub(crate) syms: Block<Sym>,
     pub(crate) terms: Block<Trm>,
     pub(crate) lits: Block<Lit>,
+    pub(crate) diseqs: Block<DisEq>,
     pub(crate) clauses: Block<Cls>,
     pub(crate) info: BlockMap<Cls, Info>,
     pub(crate) start: Vec<Id<Cls>>,

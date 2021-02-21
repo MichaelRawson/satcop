@@ -240,8 +240,7 @@ impl PP {
 
     fn finalise_clause(&mut self, mut clause: CNFFormula, info: Info) {
         self.rename_clause(&mut clause);
-        //dbg!(&clause);
-        self.builder.clause(clause, self.fresh_rename, info);
+        self.builder.clause(clause, self.fresh_rename, info, true);
     }
 
     pub(crate) fn sym(&mut self, sym: Sym) -> Id<Sym> {
