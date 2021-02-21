@@ -1,7 +1,7 @@
 use crate::block::Id;
 use crate::matrix::*;
 use crate::options::Options;
-use crate::pp::PreProcessor;
+use crate::pp::PP;
 use crate::syntax;
 use anyhow::Context;
 use fnv::{FnvHashMap, FnvHashSet};
@@ -82,7 +82,7 @@ struct SymEntry<'a> {
 
 #[derive(Default)]
 struct Loader {
-    pp: PreProcessor,
+    pp: PP,
     fresh: u32,
     free: Vec<(String, syntax::Var)>,
     bound: Vec<(String, syntax::Var)>,
@@ -101,7 +101,7 @@ impl Loader {
         &mut self,
         term: common::DefinedTerm,
         sort: syntax::Sort,
-    ) -> anyhow::Result<syntax::Term> {
+    ) -> anyhow::Result<Rc<syntax::Term>> {
         let (lookup, borrowed) = match term {
             common::DefinedTerm::Number(ref number) => {
                 let borrowed = match number {
@@ -132,14 +132,14 @@ impl Loader {
             lookup.insert(string, sym);
             sym
         };
-        Ok(syntax::Term::Fun(sym, vec![]))
+        Ok(Rc::new(syntax::Term::Fun(sym, vec![])))
     }
 
     fn fof_plain_term(
         &mut self,
         term: PlainTerm,
         sort: syntax::Sort,
-    ) -> anyhow::Result<syntax::Term> {
+    ) -> anyhow::Result<Rc<syntax::Term>> {
         let (sym, args) = match term {
             PlainTerm::Constant(c) => (c.0 .0, vec![]),
             PlainTerm::Function(f, args) => (f.0, args.0),
@@ -169,14 +169,14 @@ impl Loader {
             .into_iter()
             .map(|t| self.fof_term(t, syntax::Sort::Obj))
             .collect::<anyhow::Result<_>>()?;
-        Ok(syntax::Term::Fun(sym, args))
+        Ok(Rc::new(syntax::Term::Fun(sym, args)))
     }
 
     fn fof_defined_term(
         &mut self,
         term: fof::DefinedTerm,
         sort: syntax::Sort,
-    ) -> anyhow::Result<syntax::Term> {
+    ) -> anyhow::Result<Rc<syntax::Term>> {
         match term {
             fof::DefinedTerm::Defined(defined) => {
                 self.defined_term(defined, sort)
@@ -191,7 +191,7 @@ impl Loader {
         &mut self,
         term: FunctionTerm,
         sort: syntax::Sort,
-    ) -> anyhow::Result<syntax::Term> {
+    ) -> anyhow::Result<Rc<syntax::Term>> {
         match term {
             FunctionTerm::Plain(term) => self.fof_plain_term(term, sort),
             FunctionTerm::Defined(def) => self.fof_defined_term(def, sort),
@@ -205,7 +205,7 @@ impl Loader {
         &mut self,
         term: Term,
         sort: syntax::Sort,
-    ) -> anyhow::Result<syntax::Term> {
+    ) -> anyhow::Result<Rc<syntax::Term>> {
         Ok(match term {
             Term::Function(term) => self.fof_function_term(*term, sort)?,
             Term::Variable(x) => {
@@ -224,7 +224,7 @@ impl Loader {
                     self.free.push((name.to_string(), var));
                     var
                 };
-                syntax::Term::Var(var)
+                Rc::new(syntax::Term::Var(var))
             }
         })
     }
@@ -254,13 +254,13 @@ impl Loader {
                 self.fof_defined_plain_formula(plain)?
             }
             DefinedAtomicFormula::Infix(infix) => {
-                syntax::Atom::Pred(syntax::Term::Fun(
+                syntax::Atom::Pred(Rc::new(syntax::Term::Fun(
                     EQUALITY,
                     vec![
                         self.fof_term(*infix.left, syntax::Sort::Obj)?,
                         self.fof_term(*infix.right, syntax::Sort::Obj)?,
                     ],
-                ))
+                )))
             }
         })
     }
@@ -286,12 +286,14 @@ impl Loader {
         &mut self,
         infix: InfixUnary,
     ) -> anyhow::Result<syntax::Formula> {
-        Ok(syntax::Formula::Atom(syntax::Atom::Pred(syntax::Term::Fun(
-            EQUALITY,
-            vec![
-                self.fof_term(*infix.left, syntax::Sort::Obj)?,
-                self.fof_term(*infix.right, syntax::Sort::Obj)?,
-            ],
+        Ok(syntax::Formula::Atom(syntax::Atom::Pred(Rc::new(
+            syntax::Term::Fun(
+                EQUALITY,
+                vec![
+                    self.fof_term(*infix.left, syntax::Sort::Obj)?,
+                    self.fof_term(*infix.right, syntax::Sort::Obj)?,
+                ],
+            ),
         )))
         .negated())
     }
@@ -369,10 +371,9 @@ impl Loader {
         let mut f = self.fof_unit_formula(*fof.formula)?;
         for _ in 0..num_bound {
             let (_, var) = self.bound.pop().expect("bound this earlier");
-            let boxed = Box::new(f);
             f = match fof.quantifier {
-                Quantifier::Forall => syntax::Formula::All(var, boxed),
-                Quantifier::Exists => syntax::Formula::Ex(var, boxed),
+                Quantifier::Forall => syntax::Formula::All(var, Box::new(f)),
+                Quantifier::Exists => syntax::Formula::Ex(var, Box::new(f)),
             };
         }
         Ok(f)

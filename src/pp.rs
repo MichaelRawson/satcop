@@ -2,52 +2,248 @@ use crate::block::Id;
 use crate::builder::Builder;
 use crate::matrix::Matrix;
 use crate::syntax::*;
-use std::fmt;
+use std::rc::Rc;
 
-enum SkNNF {
-    Lit(CNFLiteral),
-    And(Vec<SkNNF>),
-    Or(Vec<SkNNF>),
-}
+const THRESHOLD: u32 = 4;
 
-impl fmt::Debug for SkNNF {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Self::Lit(lit) => write!(f, "{:?}", lit),
-            Self::And(fs) => write!(f, "and{:?}", fs),
-            Self::Or(fs) => write!(f, "or{:?}", fs),
-        }
-    }
-}
-
-impl SkNNF {
-    fn vars(&self, vars: &mut Vec<bool>) {
-        match self {
-            Self::Lit(lit) => {
-                lit.vars(vars);
-            }
-            Self::And(fs) | Self::Or(fs) => {
-                for f in fs {
-                    f.vars(vars);
-                }
-            }
-        }
-    }
+#[derive(Debug)]
+struct Definition {
+    clauses: Vec<CNFFormula>,
+    atom: Rc<Term>,
 }
 
 #[derive(Default)]
-pub(crate) struct PreProcessor {
+pub(crate) struct PP {
     builder: Builder,
-    bound: Vec<Var>,
-    subst: Vec<Option<Term>>,
-    vars: Vec<bool>,
-    rename: Vec<u32>,
+    bound: Vec<Rc<Term>>,
+    subst: Vec<Option<Rc<Term>>>,
     fresh_skolem: u32,
-    fresh_definition: u32,
+    rename: Vec<u32>,
     fresh_rename: u32,
+    fresh_definition: u32,
 }
 
-impl PreProcessor {
+impl PP {
+    fn term(&mut self, term: &Rc<Term>) -> Rc<Term> {
+        match &**term {
+            Term::Var(x) => self.subst[x.0 as usize]
+                .clone()
+                .unwrap_or_else(|| term.clone()),
+            Term::Fun(f, ts) => Rc::new(Term::Fun(
+                *f,
+                ts.iter().map(|t| self.term(t)).collect(),
+            )),
+        }
+    }
+
+    fn distribute(
+        left: Vec<CNFFormula>,
+        right: Vec<CNFFormula>,
+    ) -> Vec<CNFFormula> {
+        let mut result = vec![];
+        for c in &left {
+            for d in &right {
+                let mut clause = vec![];
+                clause.extend(c.0.clone());
+                clause.extend(d.0.clone());
+                result.push(CNFFormula(clause));
+            }
+        }
+        result
+    }
+
+    fn cnf(
+        &mut self,
+        pol: bool,
+        formula: &Formula,
+        info: &Info,
+    ) -> Vec<CNFFormula> {
+        match (pol, formula) {
+            (pol, Formula::Atom(Atom::Bool(b))) => {
+                if *b == pol {
+                    vec![]
+                } else {
+                    vec![CNFFormula(vec![])]
+                }
+            }
+            (pol, Formula::Atom(Atom::Pred(pred))) => {
+                vec![CNFFormula(vec![CNFLiteral {
+                    pol,
+                    atom: self.term(&pred),
+                }])]
+            }
+            (pol, Formula::Not(f)) => self.cnf(!pol, &**f, info),
+            (true, Formula::And(fs)) | (false, Formula::Or(fs)) => {
+                fs.iter().flat_map(|f| self.cnf(pol, f, info)).collect()
+            }
+            (true, Formula::Or(fs)) | (false, Formula::And(fs)) => {
+                let mut result = vec![];
+                for f in fs {
+                    let cnf = self.cnf(pol, f, info);
+                    if result.is_empty() {
+                        result = cnf;
+                    } else {
+                        result = Self::distribute(result, cnf);
+                    }
+                }
+                result
+            }
+            (pol, Formula::Eqv(l, r)) => {
+                let lcnf = self.cnf(pol, &**l, info);
+                let nlcnf = self.cnf(!pol, &**l, info);
+                let rcnf = self.cnf(true, &**r, info);
+                let nrcnf = self.cnf(false, &**r, info);
+                let l2r = Self::distribute(nlcnf, rcnf);
+                let r2l = Self::distribute(nrcnf, lcnf);
+                let mut result = l2r;
+                result.extend(r2l.into_iter());
+                result
+            }
+            (true, Formula::All(x, f)) | (false, Formula::Ex(x, f)) => {
+                self.bound.push(Rc::new(Term::Var(*x)));
+                let result = self.cnf(pol, &**f, info);
+                self.bound.pop();
+                result
+            }
+            (true, Formula::Ex(x, f)) | (false, Formula::All(x, f)) => {
+                let arity = self.bound.len() as u32;
+                let sort = Sort::Obj;
+                let name = Name::Skolem(self.fresh_skolem);
+                self.fresh_skolem += 1;
+                let sym = self.sym(Sym { arity, sort, name });
+                let skolem = Rc::new(Term::Fun(sym, self.bound.clone()));
+                self.subst[x.0 as usize] = Some(skolem);
+                self.cnf(pol, &**f, info)
+            }
+        }
+    }
+
+    fn definition(&mut self, formula: &Formula) -> Atom {
+        let mut vars = vec![];
+        vars.resize(self.subst.len(), false);
+        formula.vars(&mut vars);
+        let vars = vars
+            .into_iter()
+            .enumerate()
+            .filter(|(_, present)| *present)
+            .map(|(i, _)| Rc::new(Term::Var(Var(i as u32))))
+            .collect::<Vec<_>>();
+        let arity = vars.len() as u32;
+        let sort = Sort::Bool;
+        let name = Name::Definition(self.fresh_definition);
+        self.fresh_definition += 1;
+        let sym = self.sym(Sym { arity, sort, name });
+        Atom::Pred(Rc::new(Term::Fun(sym, vars)))
+    }
+
+    fn define(
+        &mut self,
+        pol: Option<bool>,
+        definition: Atom,
+        formula: Formula,
+        info: &Info,
+    ) {
+        let definition = Formula::Atom(definition);
+        let formula = match pol {
+            Some(true) => Formula::Or(vec![definition.negated(), formula]),
+            Some(false) => Formula::Or(vec![formula.negated(), definition]),
+            None => Formula::Eqv(Box::new(definition), Box::new(formula)),
+        };
+        let mut info = info.clone();
+        info.is_goal = false;
+        self.cnf_and_finalise(formula, &info);
+    }
+
+    fn name(
+        &mut self,
+        pol: Option<bool>,
+        formula: &mut Formula,
+        info: &Info,
+    ) -> (u32, u32) {
+        let (p, np) = match formula {
+            Formula::Atom(_) => (1, 1),
+            Formula::Not(f) => {
+                let (p, np) = self.name(pol.map(|pol| !pol), f, info);
+                (np, p)
+            }
+            Formula::Or(fs) => {
+                let mut p_all = 1;
+                let mut np_all = 0;
+                for f in fs {
+                    let (p, np) = self.name(pol, f, info);
+                    p_all *= p;
+                    np_all += np;
+                }
+                (p_all, np_all)
+            }
+            Formula::And(fs) => {
+                let mut p_all = 0;
+                let mut np_all = 1;
+                for f in fs {
+                    let (p, np) = self.name(pol, f, info);
+                    p_all += p;
+                    np_all *= np;
+                }
+                (p_all, np_all)
+            }
+            Formula::Eqv(l, r) => {
+                let (l, nl) = self.name(None, l, info);
+                let (r, nr) = self.name(None, r, info);
+
+                (nl * r + nr * l, l * r + nr * nl)
+            }
+            Formula::All(_, f) | Formula::Ex(_, f) => self.name(pol, f, info),
+        };
+        let num_clauses = match pol {
+            Some(true) => p,
+            Some(false) => np,
+            None => p + np,
+        };
+        if num_clauses > THRESHOLD {
+            let definition = self.definition(formula);
+            let formula =
+                std::mem::replace(formula, Formula::Atom(definition.clone()));
+            self.define(pol, definition, formula, info);
+            (1, 1)
+        } else {
+            (p, np)
+        }
+    }
+
+    fn rename_term(&mut self, term: &Rc<Term>) -> Rc<Term> {
+        Rc::new(match &**term {
+            Term::Var(x) => {
+                let index = x.0 as usize;
+                let renamed = self.rename[index];
+                Term::Var(Var(if renamed == 0 {
+                    self.fresh_rename += 1;
+                    self.rename[index] = self.fresh_rename;
+                    self.fresh_rename
+                } else {
+                    renamed
+                }))
+            }
+            Term::Fun(f, ts) => {
+                Term::Fun(*f, ts.iter().map(|t| self.rename_term(t)).collect())
+            }
+        })
+    }
+
+    fn rename_clause(&mut self, clause: &mut CNFFormula) {
+        self.fresh_rename = 0;
+        self.rename.clear();
+        self.rename.resize(self.subst.len(), 0);
+        for literal in &mut clause.0 {
+            literal.atom = self.rename_term(&literal.atom);
+        }
+    }
+
+    fn finalise_clause(&mut self, mut clause: CNFFormula, info: Info) {
+        self.rename_clause(&mut clause);
+        //dbg!(&clause);
+        self.builder.clause(clause, self.fresh_rename, info);
+    }
+
     pub(crate) fn sym(&mut self, sym: Sym) -> Id<Sym> {
         self.builder.sym(sym)
     }
@@ -56,187 +252,21 @@ impl PreProcessor {
         self.builder.finish()
     }
 
-    fn sknnf_term(&mut self, term: &Term) -> Term {
-        match term {
-            Term::Var(x) => {
-                self.subst[x.0 as usize].clone().unwrap_or(Term::Var(*x))
-            }
-            Term::Fun(f, ts) => {
-                Term::Fun(*f, ts.iter().map(|t| self.sknnf_term(t)).collect())
-            }
+    fn cnf_and_finalise(&mut self, formula: Formula, info: &Info) {
+        for clause in self.cnf(true, &formula, &info) {
+            self.finalise_clause(clause, info.clone());
         }
-    }
-
-    fn sknnf_atom(&mut self, pol: bool, atom: &Atom) -> SkNNF {
-        match atom {
-            Atom::Bool(p) => {
-                if *p == pol {
-                    SkNNF::And(vec![])
-                } else {
-                    SkNNF::Or(vec![])
-                }
-            }
-            Atom::Pred(p) => SkNNF::Lit(CNFLiteral {
-                pol,
-                atom: self.sknnf_term(p),
-            }),
-        }
-    }
-
-    fn sknnf_formula(&mut self, pol: bool, formula: &Formula) -> SkNNF {
-        match (pol, formula) {
-            (_, Formula::Atom(atom)) => self.sknnf_atom(pol, atom),
-            (_, Formula::Not(f)) => self.sknnf_formula(!pol, &*f),
-            (true, Formula::And(fs)) | (false, Formula::Or(fs)) => SkNNF::And(
-                fs.iter().map(|f| self.sknnf_formula(pol, f)).collect(),
-            ),
-            (true, Formula::Or(fs)) | (false, Formula::And(fs)) => SkNNF::Or(
-                fs.iter().map(|f| self.sknnf_formula(pol, f)).collect(),
-            ),
-            (_, Formula::Eqv(l, r)) => {
-                let p = self.sknnf_formula(pol, &*l);
-                let notp = self.sknnf_formula(!pol, &*l);
-                let q = self.sknnf_formula(true, &*r);
-                let notq = self.sknnf_formula(false, &*r);
-                SkNNF::And(vec![
-                    SkNNF::Or(vec![notp, q]),
-                    SkNNF::Or(vec![notq, p]),
-                ])
-            }
-            (true, Formula::Ex(x, f)) | (false, Formula::All(x, f)) => {
-                let arity = self.bound.len() as u32;
-                let sort = Sort::Obj;
-                let name = Name::Skolem(self.fresh_skolem);
-                self.fresh_skolem += 1;
-                let sym = self.sym(Sym { arity, sort, name });
-                let skolem = Term::Fun(
-                    sym,
-                    self.bound.iter().copied().map(Term::Var).collect(),
-                );
-                self.subst[x.0 as usize] = Some(skolem);
-                self.sknnf_formula(pol, &*f)
-            }
-            (true, Formula::All(x, f)) | (false, Formula::Ex(x, f)) => {
-                self.bound.push(*x);
-                let f = self.sknnf_formula(pol, &*f);
-                self.bound.pop();
-                f
-            }
-        }
-    }
-
-    fn cnf(&mut self, formula: SkNNF, info: Info) {
-        match formula {
-            SkNNF::Lit(lit) => {
-                self.finalise_clause(CNFFormula(vec![lit]), info)
-            }
-            SkNNF::And(fs) => {
-                for f in fs {
-                    self.cnf(f, info.clone());
-                }
-            }
-            SkNNF::Or(mut fs) => {
-                let mut literals = vec![];
-                while let Some(f) = fs.pop() {
-                    match f {
-                        SkNNF::Lit(lit) => {
-                            literals.push(lit);
-                        }
-                        SkNNF::And(gs) if gs.is_empty() => {
-                            return;
-                        }
-                        SkNNF::And(gs) if gs.len() == 1 => {
-                            fs.extend(gs.into_iter());
-                        }
-                        SkNNF::And(gs) => {
-                            self.vars.resize(self.subst.len(), false);
-                            for g in &gs {
-                                g.vars(&mut self.vars);
-                            }
-                            let vars = self
-                                .vars
-                                .drain(..)
-                                .enumerate()
-                                .filter(|(_, present)| *present)
-                                .map(|(i, _)| Term::Var(Var(i as u32)))
-                                .collect::<Vec<_>>();
-                            let arity = vars.len() as u32;
-                            let sort = Sort::Bool;
-                            let name = Name::Definition(self.fresh_definition);
-                            self.fresh_definition += 1;
-                            let sym = self.sym(Sym { arity, sort, name });
-                            let definition = Term::Fun(sym, vars);
-                            for g in gs {
-                                self.cnf(
-                                    SkNNF::Or(vec![
-                                        SkNNF::Lit(CNFLiteral {
-                                            pol: false,
-                                            atom: definition.clone(),
-                                        }),
-                                        g,
-                                    ]),
-                                    info.clone(),
-                                )
-                            }
-                            fs.push(SkNNF::Lit(CNFLiteral {
-                                pol: true,
-                                atom: definition,
-                            }));
-                        }
-                        SkNNF::Or(gs) => {
-                            fs.extend(gs);
-                        }
-                    }
-                }
-                self.finalise_clause(CNFFormula(literals), info);
-            }
-        }
-    }
-
-    fn rename_term(&mut self, term: &mut Term) {
-        match term {
-            Term::Var(x) => {
-                let index = x.0 as usize;
-                let renamed = self.rename[index];
-                if renamed == 0 {
-                    self.fresh_rename += 1;
-                    self.rename[index] = self.fresh_rename;
-                    *x = Var(self.fresh_rename);
-                } else {
-                    *x = Var(renamed);
-                }
-            }
-            Term::Fun(_, ref mut ts) => {
-                for t in ts {
-                    self.rename_term(t);
-                }
-            }
-        }
-    }
-
-    fn rename(&mut self, clause: &mut CNFFormula) {
-        self.fresh_rename = 0;
-        self.rename.clear();
-        self.rename.resize(self.subst.len(), 0);
-        for literal in &mut clause.0 {
-            self.rename_term(&mut literal.atom);
-        }
-    }
-
-    fn finalise_clause(&mut self, mut clause: CNFFormula, info: Info) {
-        self.rename(&mut clause);
-        self.builder.clause(clause, self.fresh_rename, info);
     }
 
     pub(crate) fn process(
         &mut self,
-        formula: Formula,
+        mut formula: Formula,
         info: Info,
         max_var: u32,
     ) {
         self.subst.clear();
         self.subst.resize(max_var as usize, None);
-        let sknnf = self.sknnf_formula(true, &formula);
-        self.cnf(sknnf, info);
+        self.name(Some(true), &mut formula, &info);
+        self.cnf_and_finalise(formula, &info);
     }
 }

@@ -58,15 +58,15 @@ impl Builder {
         id
     }
 
-    fn term(&mut self, term: Term) -> Id<Trm> {
-        match term {
+    fn term(&mut self, term: &Rc<Term>) -> Id<Trm> {
+        match &**term {
             Term::Var(x) => {
                 let Var(y) = x;
-                let y = y as usize;
+                let y = *y as usize;
                 if y >= self.vars.len() {
                     let matrix = &mut self.matrix;
                     self.vars
-                        .resize_with(y + 1, || matrix.terms.push(Trm::var(x)));
+                        .resize_with(y + 1, || matrix.terms.push(Trm::var(*x)));
                 }
                 self.vars[y]
             }
@@ -78,7 +78,7 @@ impl Builder {
                 }
 
                 let id = self.matrix.terms.len();
-                self.matrix.terms.push(Trm::sym(f));
+                self.matrix.terms.push(Trm::sym(*f));
                 let mut digest = Digest::default();
                 digest.update(f.index);
                 for arg in self.args.drain(record..) {
@@ -98,7 +98,7 @@ impl Builder {
 
     fn literal(&mut self, cls: Id<Cls>, literal: CNFLiteral) -> Id<Lit> {
         let pol = literal.pol;
-        let atom = self.term(literal.atom);
+        let atom = self.term(&literal.atom);
         let symbol = self.matrix.terms[atom].as_sym();
         if symbol == EQUALITY {
             self.has_equality = true;
@@ -129,13 +129,16 @@ impl Builder {
     }
 
     fn add_equality_axioms(&mut self) {
+        let v1 = Rc::new(Term::Var(Var(1)));
+        let v2 = Rc::new(Term::Var(Var(2)));
+        let v3 = Rc::new(Term::Var(Var(3)));
         self.clause(
             CNFFormula(vec![CNFLiteral {
                 pol: true,
-                atom: Term::Fun(
+                atom: Rc::new(Term::Fun(
                     EQUALITY,
-                    vec![Term::Var(Var(1)), Term::Var(Var(1))],
-                ),
+                    vec![v1.clone(), v1.clone()],
+                )),
             }]),
             1,
             Info {
@@ -148,17 +151,17 @@ impl Builder {
             CNFFormula(vec![
                 CNFLiteral {
                     pol: false,
-                    atom: Term::Fun(
+                    atom: Rc::new(Term::Fun(
                         EQUALITY,
-                        vec![Term::Var(Var(1)), Term::Var(Var(2))],
-                    ),
+                        vec![v1.clone(), v2.clone()],
+                    )),
                 },
                 CNFLiteral {
                     pol: true,
-                    atom: Term::Fun(
+                    atom: Rc::new(Term::Fun(
                         EQUALITY,
-                        vec![Term::Var(Var(2)), Term::Var(Var(1))],
-                    ),
+                        vec![v2.clone(), v1.clone()],
+                    )),
                 },
             ]),
             2,
@@ -172,24 +175,24 @@ impl Builder {
             CNFFormula(vec![
                 CNFLiteral {
                     pol: false,
-                    atom: Term::Fun(
+                    atom: Rc::new(Term::Fun(
                         EQUALITY,
-                        vec![Term::Var(Var(1)), Term::Var(Var(2))],
-                    ),
+                        vec![v1.clone(), v2.clone()],
+                    )),
                 },
                 CNFLiteral {
                     pol: false,
-                    atom: Term::Fun(
+                    atom: Rc::new(Term::Fun(
                         EQUALITY,
-                        vec![Term::Var(Var(2)), Term::Var(Var(3))],
-                    ),
+                        vec![v2, v3.clone()],
+                    )),
                 },
                 CNFLiteral {
                     pol: true,
-                    atom: Term::Fun(
+                    atom: Rc::new(Term::Fun(
                         EQUALITY,
-                        vec![Term::Var(Var(1)), Term::Var(Var(3))],
-                    ),
+                        vec![v1, v3],
+                    )),
                 },
             ]),
             3,
@@ -214,25 +217,22 @@ impl Builder {
             let mut args1 = vec![];
             let mut args2 = vec![];
             for i in 0..arity {
-                let v1 = Var(2 * i + 1);
-                let v2 = Var(2 * i + 2);
+                let v1 = Rc::new(Term::Var(Var(2 * i + 1)));
+                let v2 = Rc::new(Term::Var(Var(2 * i + 2)));
                 lits.push(CNFLiteral {
                     pol: false,
-                    atom: Term::Fun(
-                        EQUALITY,
-                        vec![Term::Var(v1), Term::Var(v2)],
-                    ),
+                    atom: Rc::new(Term::Fun(EQUALITY, vec![v1.clone(), v2.clone()])),
                 });
-                args1.push(Term::Var(v1));
-                args2.push(Term::Var(v2));
+                args1.push(v1.clone());
+                args2.push(v2.clone());
             }
-            let t1 = Term::Fun(id, args1);
-            let t2 = Term::Fun(id, args2);
+            let t1 = Rc::new(Term::Fun(id, args1));
+            let t2 = Rc::new(Term::Fun(id, args2));
             match sort {
                 Sort::Obj => {
                     lits.push(CNFLiteral {
                         pol: true,
-                        atom: Term::Fun(EQUALITY, vec![t1, t2]),
+                        atom: Rc::new(Term::Fun(EQUALITY, vec![t1, t2])),
                     });
                 }
                 Sort::Bool => {

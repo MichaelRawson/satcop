@@ -49,7 +49,7 @@ impl fmt::Debug for Sym {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct Var(pub(crate) u32);
 
 impl Var {
@@ -128,10 +128,10 @@ pub(crate) struct Cls {
     pub(crate) vars: u32,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Term {
     Var(Var),
-    Fun(Id<Sym>, Vec<Term>),
+    Fun(Id<Sym>, Vec<Rc<Term>>),
 }
 
 impl fmt::Debug for Term {
@@ -159,9 +159,21 @@ impl Term {
     }
 }
 
+#[derive(Clone)]
 pub(crate) enum Atom {
     Bool(bool),
-    Pred(Term),
+    Pred(Rc<Term>),
+}
+
+impl Atom {
+    pub(crate) fn vars(&self, vars: &mut Vec<bool>) {
+        match self {
+            Self::Bool(_) => {}
+            Self::Pred(p) => {
+                p.vars(vars);
+            }
+        }
+    }
 }
 
 impl fmt::Debug for Atom {
@@ -186,6 +198,26 @@ pub(crate) enum Formula {
 impl Formula {
     pub(crate) fn negated(self) -> Self {
         Self::Not(Box::new(self))
+    }
+
+    pub(crate) fn vars(&self, vars: &mut Vec<bool>) {
+        match self {
+            Self::Atom(atom) => {
+                atom.vars(vars);
+            }
+            Self::Not(f) | Self::All(_, f) | Self::Ex(_, f) => {
+                f.vars(vars);
+            }
+            Self::And(fs) | Self::Or(fs) => {
+                for f in fs {
+                    f.vars(vars);
+                }
+            }
+            Self::Eqv(l, r) => {
+                l.vars(vars);
+                r.vars(vars);
+            }
+        }
     }
 }
 
@@ -216,17 +248,10 @@ pub(crate) struct Info {
     pub(crate) is_goal: bool,
 }
 
-impl Info {
-    pub(crate) fn clone_nongoal(&self) -> Self {
-        let mut clone = self.clone();
-        clone.is_goal = false;
-        clone
-    }
-}
-
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct CNFLiteral {
     pub(crate) pol: bool,
-    pub(crate) atom: Term,
+    pub(crate) atom: Rc<Term>,
 }
 
 impl fmt::Debug for CNFLiteral {
@@ -235,12 +260,6 @@ impl fmt::Debug for CNFLiteral {
             write!(f, "¬")?;
         }
         write!(f, "{:?}", self.atom)
-    }
-}
-
-impl CNFLiteral {
-    pub(crate) fn vars(&self, vars: &mut Vec<bool>) {
-        self.atom.vars(vars);
     }
 }
 
