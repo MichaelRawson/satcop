@@ -1,16 +1,27 @@
 mod dpll;
+mod euf;
 
 use crate::binding::Bindings;
 use crate::block::{Block, BlockMap, Id, Off, Range};
 use crate::digest::{Digest, DigestMap, DigestSet};
-use crate::matrix::Matrix;
+use crate::matrix::{Matrix, EQUALITY};
 use crate::syntax;
-use dpll::{Decision, DPLL};
-
-const VAR: Id<Trm> = Id::new(0);
+use crate::syntax::Sym;
+use dpll::DPLL;
+use euf::EUF;
 
 #[derive(Debug, Clone, Copy)]
 struct Trm(u32);
+
+impl Trm {
+    fn as_sym(self) -> Id<Sym> {
+        Id::new(self.0)
+    }
+
+    fn as_arg(self) -> Id<Trm> {
+        Id::new(self.0)
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Atom(Id<Trm>);
@@ -21,9 +32,16 @@ pub(crate) struct Lit {
     pub(crate) pol: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Decision {
+    pub(super) assignment: Lit,
+    reason: Option<Range<Lit>>,
+}
+
 pub(crate) struct Solver {
     empty_clause: bool,
     dpll: DPLL,
+    euf: EUF,
     clause_cache: DigestSet,
     literals: Block<Lit>,
     atoms: Block<Atom>,
@@ -37,6 +55,7 @@ impl Default for Solver {
     fn default() -> Self {
         let empty_clause = false;
         let dpll = DPLL::default();
+        let euf = EUF::default();
         let clause_cache = DigestSet::default();
         let literals = Block::default();
         let atoms = Block::default();
@@ -48,6 +67,7 @@ impl Default for Solver {
         Self {
             empty_clause,
             dpll,
+            euf,
             clause_cache,
             literals,
             atoms,
@@ -72,6 +92,7 @@ impl Solver {
                 self.empty_clause = true;
                 return true;
             }
+            self.euf.max_term(self.terms.len());
             self.dpll.max_atom(self.atoms.len());
             self.dpll.assert(&self.literals, clause);
             true
@@ -86,18 +107,22 @@ impl Solver {
         }
         'restart: loop {
             self.dpll.restart();
-            let start = self.dpll.trail.len();
-            if self.dpll.propagate(&mut self.literals).is_some() {
+            self.euf.restart();
+            if !self.dpll.propagate(&mut self.literals) {
                 return false;
             }
-            let stop = self.dpll.trail.len();
-            if self.consult_theories(Range::new(start, stop)).is_some() {
+            if !self.consult_theories(Id::new(0)) {
                 return false;
             }
             while self.dpll.tiebreak(&mut self.literals) {
-                if let Some(conflict) = self.dpll.propagate(&mut self.literals)
-                {
-                    self.dpll.analyze_conflict(&mut self.literals, conflict);
+                let start = self.literals.len();
+                let checkpoint = self.dpll.trail.len();
+                if !self.dpll.propagate(&mut self.literals) {
+                    self.dpll.analyze_conflict(&mut self.literals, start);
+                    continue 'restart;
+                }
+                if !self.consult_theories(checkpoint) {
+                    self.dpll.analyze_conflict(&mut self.literals, start);
                     continue 'restart;
                 }
             }
@@ -115,11 +140,22 @@ impl Solver {
         self.dpll.assigned_false(lit)
     }
 
-    fn consult_theories(
-        &mut self,
-        decisions: Range<Decision>,
-    ) -> Option<Range<Lit>> {
-        None
+    fn consult_theories(&mut self, start: Id<Decision>) -> bool {
+        for id in Range::new(start, self.dpll.trail.len()) {
+            let assignment = self.dpll.trail[id].assignment;
+            let atom = assignment.atom;
+            let Atom(term) = self.atoms[atom];
+            if self.terms[term].as_sym() == EQUALITY {
+                let left = self.terms[Id::new(term.index + 1)].as_arg();
+                let right = self.terms[Id::new(term.index + 2)].as_arg();
+                if assignment.pol {
+                    self.euf.assert_eq(assignment, left, right);
+                } else {
+                    self.euf.assert_neq(assignment, left, right);
+                }
+            }
+        }
+        self.euf.check(&mut self.literals)
     }
 
     fn clause(
@@ -211,7 +247,7 @@ impl Solver {
             let arg =
                 bindings.resolve(&matrix.terms, Off::new(arg, term.offset));
             let arg = if matrix.terms[arg.id].is_var() {
-                VAR
+                Id::new(0)
             } else {
                 self.term(matrix, bindings, arg)
             };

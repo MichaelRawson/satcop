@@ -1,15 +1,9 @@
-use super::{Atom, Lit};
+use super::{Atom, Decision, Lit};
 use crate::block::{Block, BlockMap, Id, Range};
 
 #[derive(Debug, Clone, Copy)]
 struct Cls {
     lits: Range<Lit>,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(super) struct Decision {
-    pub(super) assignment: Lit,
-    reason: Option<Range<Lit>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -35,7 +29,7 @@ impl DPLL {
         self.watch.ensure_capacity(max, Default::default);
     }
 
-    pub(super) fn assert(&mut self, literals: &Block<Lit>, lits: Range<Lit>) {
+    pub(super) fn assert(&mut self, literals: &Block<Lit>, clause: Range<Lit>) {
         /*
         print!("cnf(1, axiom, $false");
         for lit in lits {
@@ -49,13 +43,13 @@ impl DPLL {
         println!(").");
         */
 
-        let length = lits.len();
+        let length = clause.len();
         if length == 1 {
-            let unit = lits.start;
+            let unit = clause.start;
             self.units.push(unit);
         } else {
-            let id = self.clauses.push(Cls { lits });
-            let watch = [lits.start, Id::new(lits.start.index + 1)];
+            let id = self.clauses.push(Cls { lits: clause });
+            let watch = [clause.start, Id::new(clause.start.index + 1)];
             for watched in &watch {
                 let Lit { atom, pol } = literals[*watched];
                 self.watch[atom][pol as usize].push(id);
@@ -82,30 +76,29 @@ impl DPLL {
     pub(super) fn propagate(
         &mut self,
         literals: &mut Block<Lit>,
-    ) -> Option<Range<Lit>> {
+    ) -> bool {
         while let Some(Propagation { lit, reason }) = self.propagating.pop() {
             let Lit { atom, pol } = literals[lit];
             if let Some(assigned) = self.assignment[atom] {
                 if assigned != pol {
+                    for id in reason {
+                        literals.push(literals[id]);
+                    }
                     self.propagating.clear();
-                    return Some(reason);
+                    return false;
                 }
             } else {
                 self.assign(literals, Lit { atom, pol }, Some(reason));
             }
         }
-        None
+        true
     }
 
     pub(super) fn analyze_conflict(
         &mut self,
         literals: &mut Block<Lit>,
-        reason: Range<Lit>,
+        start: Id<Lit>,
     ) {
-        let start = literals.len();
-        for id in reason {
-            literals.push(literals[id]);
-        }
         while let Some(Decision { assignment, reason }) = self.trail.pop() {
             if let Some(reason) = reason {
                 if let Some(position) =
