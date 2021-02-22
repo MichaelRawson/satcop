@@ -198,8 +198,7 @@ impl<'matrix> Search<'matrix> {
                     self.prove();
                 }
                 self.bindings.undo_to_mark(undo_bindings);
-            }
-            else {
+            } else {
                 self.constraints.push(Constraint { left, right });
             }
         }

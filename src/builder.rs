@@ -120,9 +120,12 @@ impl Builder {
         clause: CNFFormula,
         vars: u32,
         info: Info,
-        constraints: bool
+        constraints: bool,
     ) {
         let id = self.matrix.clauses.len();
+        if clause.0.is_empty() || info.is_goal {
+            self.matrix.start.push(id);
+        }
         let lstart = self.matrix.lits.len();
         let dstart = self.matrix.diseqs.len();
         for literal in clause.0 {
@@ -150,9 +153,6 @@ impl Builder {
             self.matrix.diseqs.truncate(dstart);
         }
         let diseqs = Range::new(dstart, dstop);
-        if info.is_goal {
-            self.matrix.start.push(id);
-        }
         self.matrix.clauses.push(Cls { vars, lits, diseqs });
         self.matrix.info.block.push(info);
     }
@@ -175,7 +175,7 @@ impl Builder {
                 name: "reflexivity".into(),
                 is_goal: false,
             },
-            false
+            false,
         );
         self.clause(
             CNFFormula(vec![
@@ -200,7 +200,7 @@ impl Builder {
                 name: "symmetry".into(),
                 is_goal: false,
             },
-            true
+            true,
         );
         self.clause(
             CNFFormula(vec![
@@ -226,7 +226,7 @@ impl Builder {
                 name: "transitivity".into(),
                 is_goal: false,
             },
-            true
+            true,
         );
         let cong_name: Rc<str> = "congruence".into();
         for id in self.matrix.syms.range() {
@@ -283,7 +283,7 @@ impl Builder {
                     name: cong_name.clone(),
                     is_goal: false,
                 },
-                true
+                true,
             );
         }
     }

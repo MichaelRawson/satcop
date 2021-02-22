@@ -186,6 +186,11 @@ impl<T> Block<T> {
     }
 
     #[inline]
+    pub(crate) fn clear(&mut self) {
+        self.0.clear();
+    }
+
+    #[inline]
     pub(crate) fn truncate(&mut self, len: Id<T>) {
         self.0.truncate(len.index as usize);
     }
@@ -200,6 +205,16 @@ impl<T> Block<T> {
     #[inline]
     pub(crate) fn pop(&mut self) -> Option<T> {
         self.0.pop()
+    }
+
+    #[inline]
+    pub(crate) fn swap(&mut self, left: Id<T>, right: Id<T>) {
+        self.0.swap(left.index as usize, right.index as usize);
+    }
+
+    #[inline]
+    pub(crate) fn swap_remove(&mut self, id: Id<T>) -> T {
+        self.0.swap_remove(id.index as usize)
     }
 }
 
