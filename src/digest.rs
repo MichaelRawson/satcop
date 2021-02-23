@@ -4,7 +4,7 @@ use std::hash::{BuildHasher, Hash, Hasher};
 const FNV1A_PRIME: u128 = 0x0000000001000000000000000000013B;
 const FNV1A_OFFSET_BASIS: u128 = 0x6c62272e07bb014262b821756295c58d;
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct Digest(pub(crate) u128);
 
 impl Default for Digest {

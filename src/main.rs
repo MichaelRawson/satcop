@@ -21,7 +21,7 @@ use std::time::Duration;
 const STACK: usize = 0x1000000;
 
 fn report_err<T>(err: anyhow::Error) -> T {
-    eprintln!("smtcop: {:?}", err.context("fatal error, exiting"));
+    eprintln!("satcop: {:?}", err.context("fatal error, exiting"));
     std::process::exit(1);
 }
 
@@ -40,7 +40,7 @@ fn main() {
         let thread_opts = options.clone();
         std::thread::Builder::new()
             .stack_size(STACK)
-            .name("smtcop".to_string())
+            .name("satcop".to_string())
             .spawn(move || go(thread_opts))
             .context("spawning thread")
             .unwrap_or_else(report_err);

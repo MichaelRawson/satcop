@@ -1,5 +1,4 @@
 mod dpll;
-mod euf;
 
 use crate::binding::Bindings;
 use crate::block::{Block, BlockMap, Id, Off, Range};
@@ -8,18 +7,19 @@ use crate::matrix::{Matrix, EQUALITY};
 use crate::syntax;
 use crate::syntax::Sym;
 use dpll::DPLL;
-use euf::EUF;
 
 #[derive(Debug, Clone, Copy)]
 struct Trm(u32);
 
+const VAR: Id<Trm> = Id::new(0);
+
 impl Trm {
-    fn as_sym(self) -> Id<Sym> {
-        Id::new(self.0)
+    fn sym(sym: Id<Sym>) -> Self {
+        Self(sym.index)
     }
 
-    fn as_arg(self) -> Id<Trm> {
-        Id::new(self.0)
+    fn arg(arg: Id<Self>) -> Self {
+        Self(arg.index)
     }
 }
 
@@ -41,7 +41,6 @@ pub(super) struct Decision {
 pub(crate) struct Solver {
     empty_clause: bool,
     dpll: DPLL,
-    euf: EUF,
     clause_cache: DigestSet,
     literals: Block<Lit>,
     atoms: Block<Atom>,
@@ -55,19 +54,17 @@ impl Default for Solver {
     fn default() -> Self {
         let empty_clause = false;
         let dpll = DPLL::default();
-        let euf = EUF::default();
         let clause_cache = DigestSet::default();
         let literals = Block::default();
         let atoms = Block::default();
         let atom_map = BlockMap::default();
         let mut terms = Block::default();
-        terms.push(Trm(0));
+        terms.push(Trm::sym(EQUALITY));
         let term_sharing = DigestMap::default();
         let arg_scratch = vec![];
         Self {
             empty_clause,
             dpll,
-            euf,
             clause_cache,
             literals,
             atoms,
@@ -92,8 +89,6 @@ impl Solver {
                 self.empty_clause = true;
                 return true;
             }
-            self.euf.max_term(self.terms.len());
-            self.dpll.max_atom(self.atoms.len());
             self.dpll.assert(&self.literals, clause);
             true
         } else {
@@ -107,21 +102,12 @@ impl Solver {
         }
         'restart: loop {
             self.dpll.restart();
-            self.euf.restart();
             if !self.dpll.propagate(&mut self.literals) {
-                return false;
-            }
-            if !self.consult_theories(Id::new(0)) {
                 return false;
             }
             while self.dpll.tiebreak(&mut self.literals) {
                 let start = self.literals.len();
-                let checkpoint = self.dpll.trail.len();
                 if !self.dpll.propagate(&mut self.literals) {
-                    self.dpll.analyze_conflict(&mut self.literals, start);
-                    continue 'restart;
-                }
-                if !self.consult_theories(checkpoint) {
                     self.dpll.analyze_conflict(&mut self.literals, start);
                     continue 'restart;
                 }
@@ -138,24 +124,6 @@ impl Solver {
     ) -> bool {
         let lit = self.literal(matrix, bindings, lit);
         self.dpll.assigned_false(lit)
-    }
-
-    fn consult_theories(&mut self, start: Id<Decision>) -> bool {
-        for id in Range::new(start, self.dpll.trail.len()) {
-            let assignment = self.dpll.trail[id].assignment;
-            let atom = assignment.atom;
-            let Atom(term) = self.atoms[atom];
-            if self.terms[term].as_sym() == EQUALITY {
-                let left = self.terms[Id::new(term.index + 1)].as_arg();
-                let right = self.terms[Id::new(term.index + 2)].as_arg();
-                if assignment.pol {
-                    self.euf.assert_eq(assignment, left, right);
-                } else {
-                    self.euf.assert_neq(assignment, left, right);
-                }
-            }
-        }
-        self.euf.check(&mut self.literals)
     }
 
     fn clause(
@@ -226,6 +194,7 @@ impl Solver {
             atom
         } else {
             let atom = self.atoms.push(Atom(term));
+            self.dpll.max_atom(atom);
             self.atom_map[term] = Some(atom);
             atom
         }
@@ -247,18 +216,24 @@ impl Solver {
             let arg =
                 bindings.resolve(&matrix.terms, Off::new(arg, term.offset));
             let arg = if matrix.terms[arg.id].is_var() {
-                Id::new(0)
+                VAR
             } else {
                 self.term(matrix, bindings, arg)
             };
             self.arg_scratch.push(arg);
         }
-        let id = self.terms.len();
-        self.terms.push(Trm(sym.index));
+        if sym == EQUALITY {
+            let left = self.arg_scratch[record];
+            let right = self.arg_scratch[record + 1];
+            if left < right {
+                self.arg_scratch.swap(record, record + 1);
+            }
+        }
+        let id = self.terms.push(Trm(sym.index));
         let mut digest = Digest::default();
         digest.update(sym.index);
         for arg in self.arg_scratch.drain(record..) {
-            self.terms.push(Trm(arg.index));
+            self.terms.push(Trm::arg(arg));
             digest.update(arg.index);
         }
         if let Some(shared) = self.term_sharing.get(&digest) {

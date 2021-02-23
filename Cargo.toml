@@ -1,5 +1,5 @@
 [package]
-name = "smtcop"
+name = "satcop"
 version = "0.1.0"
 authors = ["Michael Rawson <michael@rawsons.uk>"]
 edition = "2018"
