@@ -279,11 +279,6 @@ impl<K, V> BlockMap<K, V> {
         Id::new(self.block.len().index)
     }
 
-    #[inline]
-    pub(crate) fn range(&self) -> Range<K> {
-        Range::new(Id::default(), self.len())
-    }
-
     pub(crate) fn ensure_capacity<F>(&mut self, max: Id<K>, f: F)
     where
         F: FnMut() -> V,

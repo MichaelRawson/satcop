@@ -20,6 +20,24 @@ pub(crate) fn load_error(error: &anyhow::Error) {
     }
 }
 
+pub(crate) fn gaveup<W: Write>(
+    w: &mut W,
+    options: &Options,
+) -> anyhow::Result<()> {
+    let name = get_problem_name(options);
+    writeln!(w, "% SZS status GaveUp for {}", name)?;
+    Ok(())
+}
+
+pub(crate) fn unsatisfiable<W: Write>(
+    w: &mut W,
+    options: &Options,
+) -> anyhow::Result<()> {
+    let name = get_problem_name(options);
+    writeln!(w, "% SZS status Unsatisfiable for {}", name)?;
+    Ok(())
+}
+
 pub(crate) fn timeout<W: Write>(
     w: &mut W,
     options: &Options,

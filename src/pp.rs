@@ -171,8 +171,8 @@ impl PP {
                 let mut np_all = 0;
                 for f in fs {
                     let (p, np) = self.name(pol, f, info);
-                    p_all *= p;
-                    np_all += np;
+                    p_all = std::cmp::min(THRESHOLD + 1, p_all * p);
+                    np_all = std::cmp::min(THRESHOLD + 1, np_all + np);
                 }
                 (p_all, np_all)
             }
@@ -181,8 +181,8 @@ impl PP {
                 let mut np_all = 1;
                 for f in fs {
                     let (p, np) = self.name(pol, f, info);
-                    p_all += p;
-                    np_all *= np;
+                    p_all = std::cmp::min(THRESHOLD + 1, p_all + p);
+                    np_all = std::cmp::min(THRESHOLD + 1, np_all * np);
                 }
                 (p_all, np_all)
             }
@@ -199,7 +199,7 @@ impl PP {
             Some(false) => np,
             None => p + np,
         };
-        if num_clauses > THRESHOLD {
+        if num_clauses >= THRESHOLD {
             let definition = self.definition(formula);
             let formula =
                 std::mem::replace(formula, Formula::Atom(definition.clone()));
@@ -214,14 +214,13 @@ impl PP {
         Rc::new(match &**term {
             Term::Var(x) => {
                 let index = x.0 as usize;
-                let renamed = self.rename[index];
-                Term::Var(Var(if renamed == 0 {
+                let mut renamed = self.rename[index];
+                if renamed == u32::MAX {
+                    renamed = self.fresh_rename;
+                    self.rename[index] = renamed;
                     self.fresh_rename += 1;
-                    self.rename[index] = self.fresh_rename;
-                    self.fresh_rename
-                } else {
-                    renamed
-                }))
+                }
+                Term::Var(Var(renamed))
             }
             Term::Fun(f, ts) => {
                 Term::Fun(*f, ts.iter().map(|t| self.rename_term(t)).collect())
@@ -232,7 +231,7 @@ impl PP {
     fn rename_clause(&mut self, clause: &mut CNFFormula) {
         self.fresh_rename = 0;
         self.rename.clear();
-        self.rename.resize(self.subst.len(), 0);
+        self.rename.resize(self.subst.len(), u32::MAX);
         for literal in &mut clause.0 {
             literal.atom = self.rename_term(&literal.atom);
         }

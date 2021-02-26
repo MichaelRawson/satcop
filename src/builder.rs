@@ -1,4 +1,4 @@
-use crate::block::{Id, Range};
+use crate::block::{Block, Id, Range};
 use crate::digest::{Digest, DigestMap};
 use crate::matrix::*;
 use crate::syntax::*;
@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 pub(crate) struct Builder {
     matrix: Matrix,
-    vars: Vec<Id<Trm>>,
+    vars: Block<Id<Trm>>,
     args: Vec<Id<Trm>>,
     terms: DigestMap<Id<Trm>>,
     has_equality: bool,
@@ -15,7 +15,7 @@ pub(crate) struct Builder {
 impl Default for Builder {
     fn default() -> Self {
         let matrix = Matrix::default();
-        let vars = vec![];
+        let vars = Block::default();
         let args = vec![];
         let terms = DigestMap::default();
         let has_equality = false;
@@ -26,6 +26,11 @@ impl Default for Builder {
             terms,
             has_equality,
         };
+        result.sym(Sym {
+            arity: 0,
+            sort: Sort::Bool,
+            name: Name::Equality,
+        });
         result.sym(Sym {
             arity: 2,
             sort: Sort::Bool,
@@ -40,13 +45,6 @@ impl Builder {
         if self.has_equality {
             self.add_equality_axioms();
         }
-        for id in self.matrix.syms.range() {
-            for pol in 0..2 {
-                let index = &mut self.matrix.index[id].pol[pol];
-                let clauses = &self.matrix.clauses;
-                index.sort_unstable_by_key(|pos| clauses[pos.cls].lits.len());
-            }
-        }
         self.matrix
     }
 
@@ -60,39 +58,28 @@ impl Builder {
 
     fn term(&mut self, term: &Rc<Term>) -> Id<Trm> {
         match &**term {
-            Term::Var(x) => {
-                let Var(y) = x;
-                let y = *y as usize;
-                if y >= self.vars.len() {
-                    let matrix = &mut self.matrix;
-                    self.vars.resize_with(y + 1, || {
-                        matrix.terms.push(Trm::var(*x))
-                    });
-                }
-                self.vars[y]
-            }
+            Term::Var(Var(y)) => self.vars[Id::new(*y)],
             Term::Fun(f, ts) => {
                 let record = self.args.len();
                 for t in ts {
                     let t = self.term(t);
                     self.args.push(t);
                 }
-
-                let id = self.matrix.terms.len();
-                self.matrix.terms.push(Trm::sym(*f));
                 let mut digest = Digest::default();
                 digest.update(f.index);
-                for arg in self.args.drain(record..) {
-                    self.matrix.terms.push(Trm::arg(arg));
+                for arg in &self.args[record..] {
                     digest.update(arg.index);
                 }
                 if let Some(shared) = self.terms.get(&digest) {
-                    self.matrix.terms.truncate(id);
-                    *shared
-                } else {
-                    self.terms.insert(digest, id);
-                    id
+                    self.args.truncate(record);
+                    return *shared;
                 }
+                let id = self.matrix.terms.push(Trm::sym(*f));
+                for arg in self.args.drain(record..) {
+                    self.matrix.terms.push(Trm::arg(arg));
+                }
+                self.terms.insert(digest, id);
+                id
             }
         }
     }
@@ -126,6 +113,10 @@ impl Builder {
         if clause.0.is_empty() || info.is_goal {
             self.matrix.start.push(id);
         }
+        while vars > self.vars.len().index {
+            let var = Var(self.vars.len().index);
+            self.vars.push(self.matrix.terms.push(Trm::var(var)));
+        }
         let lstart = self.matrix.lits.len();
         let dstart = self.matrix.diseqs.len();
         for literal in clause.0 {
@@ -158,15 +149,15 @@ impl Builder {
     }
 
     fn add_equality_axioms(&mut self) {
+        let v0 = Rc::new(Term::Var(Var(0)));
         let v1 = Rc::new(Term::Var(Var(1)));
         let v2 = Rc::new(Term::Var(Var(2)));
-        let v3 = Rc::new(Term::Var(Var(3)));
         self.clause(
             CNFFormula(vec![CNFLiteral {
                 pol: true,
                 atom: Rc::new(Term::Fun(
                     EQUALITY,
-                    vec![v1.clone(), v1.clone()],
+                    vec![v0.clone(), v0.clone()],
                 )),
             }]),
             1,
@@ -183,14 +174,14 @@ impl Builder {
                     pol: false,
                     atom: Rc::new(Term::Fun(
                         EQUALITY,
-                        vec![v1.clone(), v2.clone()],
+                        vec![v0.clone(), v1.clone()],
                     )),
                 },
                 CNFLiteral {
                     pol: true,
                     atom: Rc::new(Term::Fun(
                         EQUALITY,
-                        vec![v2.clone(), v1.clone()],
+                        vec![v1.clone(), v0.clone()],
                     )),
                 },
             ]),
@@ -208,16 +199,16 @@ impl Builder {
                     pol: false,
                     atom: Rc::new(Term::Fun(
                         EQUALITY,
-                        vec![v1.clone(), v2.clone()],
+                        vec![v0.clone(), v1.clone()],
                     )),
                 },
                 CNFLiteral {
                     pol: false,
-                    atom: Rc::new(Term::Fun(EQUALITY, vec![v2, v3.clone()])),
+                    atom: Rc::new(Term::Fun(EQUALITY, vec![v1, v2.clone()])),
                 },
                 CNFLiteral {
                     pol: true,
-                    atom: Rc::new(Term::Fun(EQUALITY, vec![v1, v3])),
+                    atom: Rc::new(Term::Fun(EQUALITY, vec![v0, v2])),
                 },
             ]),
             3,
@@ -243,8 +234,8 @@ impl Builder {
             let mut args1 = vec![];
             let mut args2 = vec![];
             for i in 0..arity {
-                let v1 = Rc::new(Term::Var(Var(2 * i + 1)));
-                let v2 = Rc::new(Term::Var(Var(2 * i + 2)));
+                let v1 = Rc::new(Term::Var(Var(2 * i)));
+                let v2 = Rc::new(Term::Var(Var(2 * i + 1)));
                 lits.push(CNFLiteral {
                     pol: false,
                     atom: Rc::new(Term::Fun(

@@ -1,4 +1,4 @@
-use super::{Atom, Decision, Lit};
+use super::{Atom, Lit};
 use crate::block::{Block, BlockMap, Id, Range};
 
 #[derive(Debug, Clone, Copy)]
@@ -12,15 +12,22 @@ struct Propagation {
     reason: Range<Lit>,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct Decision {
+    assignment: Lit,
+    reason: Option<Range<Lit>>,
+}
+
 #[derive(Default)]
 pub(super) struct DPLL {
-    pub(super) trail: Block<Decision>,
+    trail: Vec<Decision>,
     units: Vec<Id<Lit>>,
     clauses: Block<Cls>,
     assignment: BlockMap<Atom, Option<bool>>,
     watch: BlockMap<Atom, [Vec<Id<Cls>>; 2]>,
     propagating: Vec<Propagation>,
     next: Id<Atom>,
+    empty_clause: bool,
 }
 
 impl DPLL {
@@ -29,10 +36,13 @@ impl DPLL {
         self.watch.ensure_capacity(max, Default::default);
     }
 
-    pub(super) fn assert(&mut self, literals: &Block<Lit>, clause: Range<Lit>) {
-        /*
+    pub(super) fn assert(
+        &mut self,
+        literals: &mut Block<Lit>,
+        clause: Range<Lit>,
+    ) {
         print!("cnf(1, axiom, $false");
-        for lit in lits {
+        for lit in clause {
             let Lit { pol, atom } = literals[lit];
             print!(" | ");
             if !pol {
@@ -41,15 +51,34 @@ impl DPLL {
             print!("p{}", atom.index);
         }
         println!(").");
-        */
 
         let length = clause.len();
-        if length == 1 {
+        if length == 0 {
+            self.empty_clause = true;
+        } else if length == 1 {
             let unit = clause.start;
             self.units.push(unit);
+            while let Some(decision) = self.trail.pop() {
+                self.assignment[decision.assignment.atom] = None;
+            }
+            self.next = Id::new(0);
         } else {
             let id = self.clauses.push(Cls { lits: clause });
             let watch = [clause.start, Id::new(clause.start.index + 1)];
+            while !self.feasible(literals, watch[0])
+                || !self.feasible(literals, watch[1])
+            {
+                while let Some(Decision { assignment, reason }) =
+                    self.trail.pop()
+                {
+                    let atom = assignment.atom;
+                    self.assignment[atom] = None;
+                    if reason.is_none() {
+                        self.next = atom;
+                        break;
+                    }
+                }
+            }
             for watched in &watch {
                 let Lit { atom, pol } = literals[*watched];
                 self.watch[atom][pol as usize].push(id);
@@ -57,26 +86,30 @@ impl DPLL {
         }
     }
 
-    pub(super) fn assigned_false(&self, lit: Lit) -> bool {
-        self.assignment[lit.atom] != Some(lit.pol)
+    pub(super) fn solve(&mut self, literals: &mut Block<Lit>) -> bool {
+        loop {
+            if self.empty_clause {
+                return false;
+            }
+            if self.trail.is_empty() {
+                for unit in &self.units {
+                    let unit = *unit;
+                    let reason = Range::new(unit, Id::new(unit.index + 1));
+                    self.propagating.push(Propagation { lit: unit, reason });
+                }
+            }
+            let start = literals.len();
+            if !self.propagate(literals) {
+                self.analyze_conflict(literals, start);
+                continue;
+            }
+            if !self.tiebreak(literals) {
+                return true;
+            }
+        }
     }
 
-    pub(super) fn restart(&mut self) {
-        self.trail.clear();
-        for id in self.assignment.range() {
-            self.assignment[id] = None;
-        }
-        self.next = Id::default();
-        for unit in &self.units {
-            let reason = Range::new(*unit, Id::new(unit.index + 1));
-            self.propagating.push(Propagation { lit: *unit, reason });
-        }
-    }
-
-    pub(super) fn propagate(
-        &mut self,
-        literals: &mut Block<Lit>,
-    ) -> bool {
+    fn propagate(&mut self, literals: &mut Block<Lit>) -> bool {
         while let Some(Propagation { lit, reason }) = self.propagating.pop() {
             let Lit { atom, pol } = literals[lit];
             if let Some(assigned) = self.assignment[atom] {
@@ -94,12 +127,9 @@ impl DPLL {
         true
     }
 
-    pub(super) fn analyze_conflict(
-        &mut self,
-        literals: &mut Block<Lit>,
-        start: Id<Lit>,
-    ) {
+    fn analyze_conflict(&mut self, literals: &mut Block<Lit>, start: Id<Lit>) {
         while let Some(Decision { assignment, reason }) = self.trail.pop() {
+            self.assignment[assignment.atom] = None;
             if let Some(reason) = reason {
                 if let Some(position) =
                     Range::new(start, literals.len()).into_iter().find(|id| {
@@ -112,8 +142,8 @@ impl DPLL {
                 }
             }
         }
-        let stop = literals.len();
-        self.assert(literals, Range::new(start, stop));
+        self.next = Id::new(0);
+        self.assert(literals, Range::new(start, literals.len()));
     }
 
     fn resolve(
@@ -138,7 +168,7 @@ impl DPLL {
         }
     }
 
-    pub(super) fn tiebreak(&mut self, literals: &mut Block<Lit>) -> bool {
+    fn tiebreak(&mut self, literals: &mut Block<Lit>) -> bool {
         while self.next < self.assignment.len() {
             let atom = self.next;
             self.next.index += 1;

@@ -81,11 +81,7 @@ impl Trm {
     }
 
     pub(crate) fn is_var(&self) -> bool {
-        self.0 < 0
-    }
-
-    pub(crate) fn is_sym(&self) -> bool {
-        self.0 >= 0
+        self.0 <= 0
     }
 
     pub(crate) fn as_var(&self) -> Var {

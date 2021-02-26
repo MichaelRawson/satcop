@@ -5,8 +5,8 @@ mod digest;
 mod matrix;
 mod options;
 mod pp;
+mod sat;
 mod search;
-mod smt;
 mod syntax;
 mod tptp;
 mod tstp;
@@ -31,7 +31,22 @@ fn go(options: Arc<Options>) {
         report_err(err)
     });
     let mut search = Search::new(&matrix);
-    search.go();
+    if search.go() {
+        let stdout = stdout();
+        let mut lock = stdout.lock();
+        tstp::unsatisfiable(&mut lock, &options)
+            .context("printing unsat")
+            .unwrap_or_else(report_err);
+        std::process::exit(0);
+    }
+    else {
+        let stdout = stdout();
+        let mut lock = stdout.lock();
+        tstp::gaveup(&mut lock, &options)
+            .context("printing gaveup")
+            .unwrap_or_else(report_err);
+        std::process::exit(0);
+    }
 }
 
 fn main() {

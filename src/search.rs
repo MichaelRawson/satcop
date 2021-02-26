@@ -1,23 +1,11 @@
 use crate::binding::Bindings;
 use crate::block::{Block, Id, Off};
 use crate::matrix::Matrix;
-use crate::smt;
+use crate::sat;
 use crate::syntax::{Cls, Lit, Trm, Var};
 use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
 use rand::SeedableRng;
-
-#[derive(Debug)]
-struct Path {
-    lit: Off<Lit>,
-    parent: Id<Path>,
-}
-
-#[derive(Debug)]
-struct Goal {
-    lit: Off<Lit>,
-    path: Id<Path>,
-}
 
 #[derive(Debug, Clone, Copy)]
 struct Constraint {
@@ -28,81 +16,86 @@ struct Constraint {
 pub(crate) struct Search<'matrix> {
     matrix: &'matrix Matrix,
     rng: SmallRng,
-    solver: smt::Solver,
-    asserted_new_clause: bool,
+    solver: sat::Solver,
     bindings: Bindings,
-    path: Block<Path>,
-    todo: Vec<Goal>,
-    constraints: Vec<Constraint>,
+    path: Block<Off<Lit>>,
     clauses: Vec<Off<Cls>>,
     offset: u32,
-    limit: u32,
+    asserted_new_clause: bool,
 }
 
 impl<'matrix> Search<'matrix> {
     pub(crate) fn new(matrix: &'matrix Matrix) -> Self {
         let rng = SmallRng::seed_from_u64(0);
-        let solver = smt::Solver::default();
-        let asserted_new_clause = false;
+        let solver = sat::Solver::default();
         let bindings = Bindings::default();
-        let mut path = Block::default();
-        path.push(Path {
-            lit: Off::new(Id::default(), 0),
-            parent: Id::default(),
-        });
-        let todo = vec![];
-        let constraints = vec![];
+        let path = Block::default();
         let clauses = vec![];
         let offset = 0;
-        let limit = 0;
+        let asserted_new_clause = false;
         Self {
             matrix,
             rng,
             solver,
-            asserted_new_clause,
             bindings,
             path,
-            todo,
-            constraints,
             clauses,
             offset,
-            limit,
+            asserted_new_clause,
         }
     }
 
-    pub(crate) fn go(&mut self) {
-        self.limit = 0;
+    pub(crate) fn go(&mut self) -> bool {
+        let mut limit = 0;
         loop {
             self.asserted_new_clause = false;
-            for start in &self.matrix.start {
-                self.start(*start);
-            }
-            if !self.asserted_new_clause {
-                self.limit += 1;
+            if let Some(start) =
+                self.matrix.start.choose(&mut self.rng).copied()
+            {
+                /*
+                if self.start(start, limit) {
+                    return true;
+                }
+                */
+                self.start(start, limit);
+            } else {
+                return false;
+            };
+            if self.asserted_new_clause {
+                if !self.solver.solve() {
+                    return true;
+                }
+            } else {
+                limit += 1;
             }
         }
     }
 
-    fn start(&mut self, id: Id<Cls>) {
-        let cls = &self.matrix.clauses[id];
-        let path = Id::default();
-        for id in cls.lits {
-            self.todo.push(Goal {
-                lit: Off::new(id, self.offset),
-                path,
-            });
-        }
-        self.todo.shuffle(&mut self.rng);
-        self.clauses.push(Off::new(id, self.offset));
-        self.bindings.ensure_capacity(Var(self.offset + cls.vars));
+    fn start(&mut self, id: Id<Cls>, limit: u32) -> bool {
+        let cls = self.matrix.clauses[id];
+        self.clauses.push(Off::new(id, 0));
+        self.bindings.ensure_capacity(Var(cls.vars));
+        self.assert_all_clauses();
         self.offset = cls.vars;
-        self.prove();
-        self.offset = 0;
-        self.clauses.clear();
-        self.todo.clear();
+        let mut start = cls.lits.into_iter().collect::<Vec<_>>();
+        start.shuffle(&mut self.rng);
+        for lit in start {
+            let lit = Off::new(lit, 0);
+            if !self.prove(lit, limit) {
+                self.bindings.clear();
+                self.clauses.clear();
+                return false;
+            }
+        }
+        true
     }
 
-    fn prove(&mut self) {
+    fn prove(&mut self, goal: Off<Lit>, limit: u32) -> bool {
+        let offset = goal.offset;
+        let Lit { pol, atom } = self.matrix.lits[goal.id];
+        let sym = self.matrix.terms[atom].as_sym();
+        let atom = Off::new(atom, offset);
+
         for cls in &self.clauses {
             let diseqs = self.matrix.clauses[cls.id].diseqs;
             for diseq in &self.matrix.diseqs[diseqs] {
@@ -112,136 +105,97 @@ impl<'matrix> Search<'matrix> {
                     Off::new(diseq.left, cls.offset),
                     Off::new(diseq.right, cls.offset),
                 ) {
-                    return;
+                    return false;
                 }
             }
         }
-        for constraint in &self.constraints {
-            if self.bindings.equal(
-                &self.matrix.syms,
-                &self.matrix.terms,
-                constraint.left,
-                constraint.right,
-            ) {
-                return;
-            }
-        }
-
-        let mut new_clause = false;
-        for clause in &self.clauses {
-            new_clause |=
-                self.solver.assert(self.matrix, &self.bindings, *clause);
-        }
-        self.asserted_new_clause |= new_clause;
-        if new_clause && !self.solver.solve() {
-            println!("% SZS status Unsatisfiable");
-            std::process::exit(0);
-        }
-
-        let goal = if let Some(goal) = self.todo.pop() {
-            goal
-        } else {
-            return;
-        };
-
-        // check the goal and everything on the path is (assigned) true
-        if self
-            .solver
-            .assigned_false(self.matrix, &self.bindings, goal.lit)
-        {
-            self.prove();
-            self.todo.push(goal);
-            return;
-        }
-        let mut path = goal.path;
-        while path.index != 0 {
-            if self.solver.assigned_false(
-                self.matrix,
-                &self.bindings,
-                self.path[path].lit,
-            ) {
-                self.prove();
-                self.todo.push(goal);
-                return;
-            }
-            path = self.path[path].parent;
-        }
-
-        let undo_regularity = self.constraints.len();
-        let undo_bindings = self.bindings.mark();
-        let offset = goal.lit.offset;
-        let Lit { pol, atom } = self.matrix.lits[goal.lit.id];
-        let sym = self.matrix.terms[atom].as_sym();
-        let left = Off::new(atom, offset);
-
+        let save_bindings = self.bindings.mark();
         // reductions
-        let mut path_len = 0;
-        let mut path = goal.path;
-        while path.index != 0 {
-            let path_data = self.path[path].lit;
-            let path_lit = self.matrix.lits[path_data.id];
-            let path_sym = self.matrix.terms[path_lit.atom].as_sym();
-            path = self.path[path].parent;
-            path_len += 1;
-            if path_sym != sym {
+        for pid in self.path.range() {
+            let plit = self.path[pid];
+            let ppol = self.matrix.lits[plit.id].pol;
+            let patom = Off::new(self.matrix.lits[plit.id].atom, plit.offset);
+            let psym = self.matrix.terms[patom.id].as_sym();
+
+            if sym != psym {
                 continue;
             }
-
-            let right = Off::new(path_lit.atom, path_data.offset);
-            if path_lit.pol != pol {
+            if pol == ppol {
+                if self.bindings.equal(
+                    &self.matrix.syms,
+                    &self.matrix.terms,
+                    atom,
+                    patom,
+                ) {
+                    return false;
+                }
+            } else {
                 if self.bindings.unify(
                     &self.matrix.syms,
                     &self.matrix.terms,
-                    left,
-                    right,
+                    atom,
+                    patom,
                 ) {
-                    self.prove();
+                    self.assert_all_clauses();
+                    return true;
                 }
-                self.bindings.undo_to_mark(undo_bindings);
-            } else {
-                self.constraints.push(Constraint { left, right });
+                self.bindings.undo_to_mark(save_bindings);
             }
         }
 
+        let save_clauses = self.clauses.len();
+        let save_offset = self.offset;
         // extensions
-        let undo_todo = self.todo.len();
-        let path = self.path.push(Path {
-            lit: goal.lit,
-            parent: goal.path,
-        });
-        for pos in &self.matrix.index[sym].pol[!pol as usize] {
+        self.path.push(goal);
+        let mut alternatives =
+            self.matrix.index[sym].pol[!pol as usize].clone();
+        alternatives.shuffle(&mut self.rng);
+        'extensions: for pos in alternatives {
             let cls = &self.matrix.clauses[pos.cls];
-            if path_len + self.todo.len() as u32 + cls.lits.len() > self.limit
-            {
+            let mut clen = cls.lits.len();
+            if clen > limit {
                 continue;
             }
             self.bindings.ensure_capacity(Var(self.offset + cls.vars));
             if self.bindings.unify(
                 &self.matrix.syms,
                 &self.matrix.terms,
-                Off::new(atom, offset),
+                atom,
                 Off::new(self.matrix.lits[pos.lit].atom, self.offset),
             ) {
                 self.clauses.push(Off::new(pos.cls, self.offset));
-                let start = self.todo.len();
-                for id in cls.lits {
-                    if id != pos.lit {
-                        let lit = Off::new(id, self.offset);
-                        self.todo.push(Goal { path, lit });
-                    }
-                }
-                self.todo[start..].shuffle(&mut self.rng);
+                self.assert_all_clauses();
                 self.offset += cls.vars;
-                self.prove();
-                self.offset -= cls.vars;
-                self.todo.truncate(undo_todo);
-                self.clauses.pop();
+                let mut promises = cls
+                    .lits
+                    .into_iter()
+                    .filter(|id| *id != pos.lit)
+                    .collect::<Vec<_>>();
+                promises.shuffle(&mut self.rng);
+                for id in promises {
+                    let lit = Off::new(id, save_offset);
+                    if !self.prove(lit, limit - clen) {
+                        self.offset = save_offset;
+                        self.clauses.truncate(save_clauses);
+                        self.bindings.undo_to_mark(save_bindings);
+                        continue 'extensions;
+                    }
+                    clen -= 1;
+                }
+                self.path.pop();
+                return true;
             }
-            self.bindings.undo_to_mark(undo_bindings);
+            self.bindings.undo_to_mark(save_bindings);
         }
+        self.offset = save_offset;
         self.path.pop();
+        false
+    }
 
-        self.constraints.truncate(undo_regularity);
-        self.todo.push(goal);
+    fn assert_all_clauses(&mut self) {
+        for clause in &self.clauses {
+            self.asserted_new_clause |=
+                self.solver.assert(self.matrix, &self.bindings, *clause);
+        }
     }
 }
