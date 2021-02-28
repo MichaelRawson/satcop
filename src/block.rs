@@ -93,6 +93,11 @@ impl<T> Range<T> {
     }
 
     #[inline]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.start == self.stop
+    }
+
+    #[inline]
     pub(crate) fn len(&self) -> u32 {
         self.stop.index - self.start.index
     }
@@ -205,11 +210,6 @@ impl<T> Block<T> {
     #[inline]
     pub(crate) fn pop(&mut self) -> Option<T> {
         self.0.pop()
-    }
-
-    #[inline]
-    pub(crate) fn swap(&mut self, left: Id<T>, right: Id<T>) {
-        self.0.swap(left.index as usize, right.index as usize);
     }
 
     #[inline]

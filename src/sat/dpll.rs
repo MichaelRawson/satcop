@@ -41,6 +41,7 @@ impl DPLL {
         literals: &mut Block<Lit>,
         clause: Range<Lit>,
     ) {
+        /*
         print!("cnf(1, axiom, $false");
         for lit in clause {
             let Lit { pol, atom } = literals[lit];
@@ -51,6 +52,7 @@ impl DPLL {
             print!("p{}", atom.index);
         }
         println!(").");
+        */
 
         let length = clause.len();
         if length == 0 {
@@ -212,10 +214,12 @@ impl DPLL {
             };
             for other in clause.lits.into_iter().skip(2) {
                 if self.feasible(literals, other) {
-                    literals.swap(assigned, other);
+                    let new = literals[other];
+                    let old = literals[assigned];
                     self.watch[atom][!pol as usize].swap_remove(i);
-                    let Lit { atom, pol } = literals[assigned];
-                    self.watch[atom][pol as usize].push(id);
+                    self.watch[new.atom][new.pol as usize].push(id);
+                    literals[other] = old;
+                    literals[assigned] = new;
                     continue 'watch;
                 }
             }

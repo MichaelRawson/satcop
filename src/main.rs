@@ -30,6 +30,10 @@ fn go(options: Arc<Options>) {
         tstp::load_error(&err);
         report_err(err)
     });
+    if options.clausify {
+        matrix.dump_cnf();
+        std::process::exit(0);
+    }
     let mut search = Search::new(&matrix);
     if search.go() {
         let stdout = stdout();

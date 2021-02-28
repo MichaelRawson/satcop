@@ -6,6 +6,9 @@ pub(crate) struct Options {
     #[clap(parse(from_os_str))]
     pub(crate) path: PathBuf,
 
+    #[clap(long)]
+    pub(crate) clausify: bool,
+
     #[clap(long, default_value = "10")]
     pub(crate) time: u64,
 }

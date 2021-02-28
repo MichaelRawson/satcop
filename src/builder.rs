@@ -123,7 +123,6 @@ impl Builder {
             self.literal(id, literal);
         }
         let lstop = self.matrix.lits.len();
-        let dstop = self.matrix.diseqs.len();
         let lits = Range::new(lstart, lstop);
         for id1 in lits {
             let lit1 = self.matrix.lits[id1];
@@ -143,6 +142,7 @@ impl Builder {
         if !constraints {
             self.matrix.diseqs.truncate(dstart);
         }
+        let dstop = self.matrix.diseqs.len();
         let diseqs = Range::new(dstart, dstop);
         self.matrix.clauses.push(Cls { vars, lits, diseqs });
         self.matrix.info.block.push(info);

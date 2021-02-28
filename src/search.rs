@@ -19,6 +19,7 @@ pub(crate) struct Search<'matrix> {
     solver: sat::Solver,
     bindings: Bindings,
     path: Block<Off<Lit>>,
+    todo: Block<Id<Lit>>,
     clauses: Vec<Off<Cls>>,
     offset: u32,
     asserted_new_clause: bool,
@@ -30,6 +31,7 @@ impl<'matrix> Search<'matrix> {
         let solver = sat::Solver::default();
         let bindings = Bindings::default();
         let path = Block::default();
+        let todo = Block::default();
         let clauses = vec![];
         let offset = 0;
         let asserted_new_clause = false;
@@ -39,6 +41,7 @@ impl<'matrix> Search<'matrix> {
             solver,
             bindings,
             path,
+            todo,
             clauses,
             offset,
             asserted_new_clause,
@@ -49,15 +52,13 @@ impl<'matrix> Search<'matrix> {
         let mut limit = 0;
         loop {
             self.asserted_new_clause = false;
-            if let Some(start) =
-                self.matrix.start.choose(&mut self.rng).copied()
+            if let Some(start) = self.matrix.start[self.matrix.start.range()]
+                .choose(&mut self.rng)
+                .copied()
             {
-                /*
                 if self.start(start, limit) {
                     return true;
                 }
-                */
-                self.start(start, limit);
             } else {
                 return false;
             };
@@ -77,16 +78,22 @@ impl<'matrix> Search<'matrix> {
         self.bindings.ensure_capacity(Var(cls.vars));
         self.assert_all_clauses();
         self.offset = cls.vars;
-        let mut start = cls.lits.into_iter().collect::<Vec<_>>();
-        start.shuffle(&mut self.rng);
-        for lit in start {
-            let lit = Off::new(lit, 0);
+        assert!(self.todo.len() == Id::new(0));
+        for lit in cls.lits {
+            self.todo.push(lit);
+        }
+        let todo = self.todo.range();
+        self.todo[todo].shuffle(&mut self.rng);
+        for todo in todo {
+            let lit = Off::new(self.todo[todo], 0);
             if !self.prove(lit, limit) {
                 self.bindings.clear();
                 self.clauses.clear();
+                self.todo.clear();
                 return false;
             }
         }
+        self.todo.clear();
         true
     }
 
