@@ -175,6 +175,13 @@ impl<T> Block<T> {
         Id::new(len as u32)
     }
 
+    #[inline]
+    pub(crate) fn last(&self) -> Id<T> {
+        let mut last = self.len();
+        last.index -= 1;
+        last
+    }
+
     pub(crate) fn ensure_capacity<F>(&mut self, max: Id<T>, f: F)
     where
         F: FnMut() -> T,
@@ -210,11 +217,6 @@ impl<T> Block<T> {
     #[inline]
     pub(crate) fn pop(&mut self) -> Option<T> {
         self.0.pop()
-    }
-
-    #[inline]
-    pub(crate) fn swap_remove(&mut self, id: Id<T>) -> T {
-        self.0.swap_remove(id.index as usize)
     }
 }
 

@@ -24,7 +24,7 @@ pub(super) struct DPLL {
     units: Vec<Id<Lit>>,
     clauses: Block<Cls>,
     assignment: BlockMap<Atom, Option<bool>>,
-    watch: BlockMap<Atom, [Vec<Id<Cls>>; 2]>,
+    watch: BlockMap<Atom, [Block<Id<Cls>>; 2]>,
     propagating: Vec<Propagation>,
     next: Id<Atom>,
     empty_clause: bool,
@@ -66,9 +66,11 @@ impl DPLL {
             self.next = Id::new(0);
         } else {
             let id = self.clauses.push(Cls { lits: clause });
-            let watch = [clause.start, Id::new(clause.start.index + 1)];
-            while !self.feasible(literals, watch[0])
-                || !self.feasible(literals, watch[1])
+            while clause
+                .into_iter()
+                .filter(|id| self.feasible(literals, *id))
+                .count()
+                < 2
             {
                 while let Some(Decision { assignment, reason }) =
                     self.trail.pop()
@@ -81,6 +83,21 @@ impl DPLL {
                     }
                 }
             }
+            let mut index = 0;
+            for id in clause {
+                if index > 1 {
+                    break;
+                }
+                if self.feasible(literals, id) {
+                    let mut dest = clause.start;
+                    dest.index += index;
+                    let replaced = literals[dest];
+                    literals[dest] = literals[id];
+                    literals[id] = replaced;
+                    index += 1;
+                }
+            }
+            let watch = [clause.start, Id::new(clause.start.index + 1)];
             for watched in &watch {
                 let Lit { atom, pol } = literals[*watched];
                 self.watch[atom][pol as usize].push(id);
@@ -139,7 +156,9 @@ impl DPLL {
                             && literals[*id].pol != assignment.pol
                     })
                 {
-                    let resolvent = literals.swap_remove(position);
+                    let resolvent = literals[position];
+                    literals[position] = literals[literals.last()];
+                    literals.pop();
                     self.resolve(literals, start, resolvent, reason);
                 }
             }
@@ -201,7 +220,7 @@ impl DPLL {
         atom: Id<Atom>,
         pol: bool,
     ) {
-        let mut i = 0;
+        let mut i = Id::new(0);
         'watch: while i < self.watch[atom][!pol as usize].len() {
             let id = self.watch[atom][!pol as usize][i];
             let clause = self.clauses[id];
@@ -216,7 +235,10 @@ impl DPLL {
                 if self.feasible(literals, other) {
                     let new = literals[other];
                     let old = literals[assigned];
-                    self.watch[atom][!pol as usize].swap_remove(i);
+                    let last = self.watch[atom][!pol as usize]
+                        [self.watch[atom][!pol as usize].last()];
+                    self.watch[atom][!pol as usize][i] = last;
+                    self.watch[atom][!pol as usize].pop();
                     self.watch[new.atom][new.pol as usize].push(id);
                     literals[other] = old;
                     literals[assigned] = new;
@@ -229,7 +251,7 @@ impl DPLL {
                     reason: clause.lits,
                 });
             }
-            i += 1;
+            i.index += 1;
         }
     }
 
