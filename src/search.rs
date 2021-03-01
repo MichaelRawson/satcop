@@ -19,7 +19,6 @@ pub(crate) struct Search<'matrix> {
     solver: sat::Solver,
     bindings: Bindings,
     path: Block<Off<Lit>>,
-    todo: Block<Id<Lit>>,
     clauses: Vec<Off<Cls>>,
     offset: u32,
     asserted_new_clause: bool,
@@ -31,7 +30,6 @@ impl<'matrix> Search<'matrix> {
         let solver = sat::Solver::default();
         let bindings = Bindings::default();
         let path = Block::default();
-        let todo = Block::default();
         let clauses = vec![];
         let offset = 0;
         let asserted_new_clause = false;
@@ -41,7 +39,6 @@ impl<'matrix> Search<'matrix> {
             solver,
             bindings,
             path,
-            todo,
             clauses,
             offset,
             asserted_new_clause,
@@ -56,15 +53,16 @@ impl<'matrix> Search<'matrix> {
                 .choose(&mut self.rng)
                 .copied()
             {
-                if self.start(start, limit) {
-                    return true;
-                }
+                self.start(start, limit);
             } else {
                 return false;
             };
             if self.asserted_new_clause {
                 if !self.solver.solve() {
                     return true;
+                }
+                if limit > 0 {
+                    limit -= 1;
                 }
             } else {
                 limit += 1;
@@ -78,26 +76,27 @@ impl<'matrix> Search<'matrix> {
         self.bindings.ensure_capacity(Var(cls.vars));
         self.assert_all_clauses();
         self.offset = cls.vars;
-        assert!(self.todo.len() == Id::new(0));
-        for lit in cls.lits {
-            self.todo.push(lit);
-        }
-        let todo = self.todo.range();
-        self.todo[todo].shuffle(&mut self.rng);
-        for todo in todo {
-            let lit = Off::new(self.todo[todo], 0);
+        let mut promises = cls.lits.into_iter().collect::<Vec<_>>();
+        promises.shuffle(&mut self.rng);
+        while let Some(id) = promises.pop() {
+            let lit = Off::new(id, 0);
             if !self.prove(lit, limit) {
                 self.bindings.clear();
                 self.clauses.clear();
-                self.todo.clear();
                 return false;
             }
         }
-        self.todo.clear();
         true
     }
 
     fn prove(&mut self, goal: Off<Lit>, limit: u32) -> bool {
+        if self
+            .solver
+            .is_ground_false(self.matrix, &self.bindings, goal)
+        {
+            return true;
+        }
+
         let offset = goal.offset;
         let Lit { pol, atom } = self.matrix.lits[goal.id];
         let sym = self.matrix.terms[atom].as_sym();
@@ -120,6 +119,12 @@ impl<'matrix> Search<'matrix> {
         // reductions
         for pid in self.path.range() {
             let plit = self.path[pid];
+            if self
+                .solver
+                .is_ground_false(self.matrix, &self.bindings, plit)
+            {
+                return true;
+            }
             let ppol = self.matrix.lits[plit.id].pol;
             let patom = Off::new(self.matrix.lits[plit.id].atom, plit.offset);
             let psym = self.matrix.terms[patom.id].as_sym();
@@ -148,6 +153,10 @@ impl<'matrix> Search<'matrix> {
                 }
                 self.bindings.undo_to_mark(save_bindings);
             }
+        }
+
+        if limit == 0 {
+            return false;
         }
 
         let save_clauses = self.clauses.len();
@@ -179,7 +188,7 @@ impl<'matrix> Search<'matrix> {
                     .filter(|id| *id != pos.lit)
                     .collect::<Vec<_>>();
                 promises.shuffle(&mut self.rng);
-                for id in promises {
+                while let Some(id) = promises.pop() {
                     let lit = Off::new(id, save_offset);
                     if !self.prove(lit, limit - clen) {
                         self.offset = save_offset;

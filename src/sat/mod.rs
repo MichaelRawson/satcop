@@ -61,6 +61,17 @@ impl Solver {
         self.dpll.solve(&mut self.literals)
     }
 
+    pub(crate) fn is_ground_false(
+        &mut self,
+        matrix: &Matrix,
+        bindings: &Bindings,
+        lit: Off<syntax::Lit>,
+    ) -> bool {
+        let mut ground = true;
+        let lit = self.literal(matrix, bindings, lit, &mut ground);
+        ground && self.dpll.is_assigned_false(lit)
+    }
+
     fn clause(
         &mut self,
         matrix: &Matrix,
@@ -70,8 +81,13 @@ impl Solver {
         let start = self.literals.len();
         let mut discard_clause = false;
         'next: for lit in matrix.clauses[clause.id].lits {
-            let lit =
-                self.literal(matrix, bindings, Off::new(lit, clause.offset));
+            let mut _ground = true;
+            let lit = self.literal(
+                matrix,
+                bindings,
+                Off::new(lit, clause.offset),
+                &mut _ground
+            );
             for id in Range::new(start, self.literals.len()) {
                 let other = self.literals[id];
                 if other.atom == lit.atom {
@@ -111,9 +127,11 @@ impl Solver {
         matrix: &Matrix,
         bindings: &Bindings,
         lit: Off<syntax::Lit>,
+        ground: &mut bool
     ) -> Lit {
         let syntax::Lit { pol, atom } = matrix.lits[lit.id];
-        let atom = self.atom(matrix, bindings, Off::new(atom, lit.offset));
+        let atom =
+            self.atom(matrix, bindings, Off::new(atom, lit.offset), ground);
         Lit { pol, atom }
     }
 
@@ -122,9 +140,10 @@ impl Solver {
         matrix: &Matrix,
         bindings: &Bindings,
         atom: Off<syntax::Trm>,
+        ground: &mut bool
     ) -> Id<Atom> {
         let mut digest = Digest::default();
-        self.term(matrix, bindings, atom, &mut digest);
+        self.term(matrix, bindings, atom, &mut digest, ground);
         let fresh = &mut self.fresh;
         let atom = *self.atoms.entry(digest).or_insert_with(|| {
             let atom = *fresh;
@@ -141,6 +160,7 @@ impl Solver {
         bindings: &Bindings,
         term: Off<syntax::Trm>,
         digest: &mut Digest,
+        ground: &mut bool,
     ) {
         let sym = matrix.terms[term.id].as_sym();
         digest.update(sym.index);
@@ -153,8 +173,9 @@ impl Solver {
                 bindings.resolve(&matrix.terms, Off::new(arg, term.offset));
             if matrix.terms[arg.id].is_var() {
                 digest.update(0u128);
+                *ground = false;
             } else {
-                self.term(matrix, bindings, arg, digest);
+                self.term(matrix, bindings, arg, digest, ground);
             };
         }
     }

@@ -91,9 +91,12 @@ impl DPLL {
                 if self.feasible(literals, id) {
                     let mut dest = clause.start;
                     dest.index += index;
-                    let replaced = literals[dest];
-                    literals[dest] = literals[id];
-                    literals[id] = replaced;
+                    #[allow(clippy::manual_swap)]
+                    {
+                        let replaced = literals[dest];
+                        literals[dest] = literals[id];
+                        literals[id] = replaced;
+                    }
                     index += 1;
                 }
             }
@@ -126,6 +129,11 @@ impl DPLL {
                 return true;
             }
         }
+    }
+
+    pub(super) fn is_assigned_false(&self, lit: Lit) -> bool {
+        let Lit { atom, pol } = lit;
+        self.assignment[atom] == Some(!pol)
     }
 
     fn propagate(&mut self, literals: &mut Block<Lit>) -> bool {
