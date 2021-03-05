@@ -175,13 +175,6 @@ impl<T> Block<T> {
         Id::new(len as u32)
     }
 
-    #[inline]
-    pub(crate) fn last(&self) -> Id<T> {
-        let mut last = self.len();
-        last.index -= 1;
-        last
-    }
-
     pub(crate) fn ensure_capacity<F>(&mut self, max: Id<T>, f: F)
     where
         F: FnMut() -> T,
@@ -273,20 +266,6 @@ impl<T> IndexMut<Range<T>> for Block<T> {
 pub(crate) struct BlockMap<K, V> {
     pub(crate) block: Block<V>,
     _phantom: PhantomData<K>,
-}
-
-impl<K, V> BlockMap<K, V> {
-    #[inline]
-    pub(crate) fn len(&self) -> Id<K> {
-        Id::new(self.block.len().index)
-    }
-
-    pub(crate) fn ensure_capacity<F>(&mut self, max: Id<K>, f: F)
-    where
-        F: FnMut() -> V,
-    {
-        self.block.ensure_capacity(Id::new(max.index), f);
-    }
 }
 
 impl<K, V> Index<Id<K>> for BlockMap<K, V> {

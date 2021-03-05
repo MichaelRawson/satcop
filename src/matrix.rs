@@ -1,5 +1,6 @@
 use crate::block::{Block, BlockMap, Id};
 use crate::syntax::{Cls, DisEq, Info, Lit, Sym, Trm};
+use fnv::FnvHashSet;
 
 pub(crate) const EQUALITY: Id<Sym> = Id::new(1);
 
@@ -17,6 +18,7 @@ pub(crate) struct Entry {
 #[derive(Debug, Default)]
 pub(crate) struct Matrix {
     pub(crate) syms: Block<Sym>,
+    pub(crate) goal_constants: FnvHashSet<Id<Sym>>,
     pub(crate) terms: Block<Trm>,
     pub(crate) lits: Block<Lit>,
     pub(crate) diseqs: Block<DisEq>,
@@ -32,15 +34,13 @@ impl Matrix {
             print!("cnf(c{}, ", id.index);
             if self.info[id].is_goal {
                 print!("negated_conjecture, ");
-            }
-            else {
+            } else {
                 print!("axiom, ");
             }
             let clause = self.clauses[id];
             if clause.lits.is_empty() {
                 print!("$false")
-            }
-            else {
+            } else {
                 for id in clause.lits {
                     if id != clause.lits.start {
                         print!(" | ");
@@ -60,8 +60,7 @@ impl Matrix {
         let term = self.terms[id];
         if term.is_var() {
             print!("X{}", term.as_var().0);
-        }
-        else {
+        } else {
             let sym = term.as_sym();
             if sym == EQUALITY {
                 id.index += 1;
@@ -69,8 +68,7 @@ impl Matrix {
                 print!(" = ");
                 id.index += 1;
                 self.dump_term(self.terms[id].as_arg());
-            }
-            else {
+            } else {
                 let arity = self.syms[sym].arity;
                 print!("{}", self.syms[sym].name);
                 if arity == 0 {

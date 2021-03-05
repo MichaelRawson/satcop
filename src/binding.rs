@@ -116,7 +116,7 @@ impl Bindings {
         if lvar && rvar {
             let x = terms[left.id].as_var().offset(left.offset);
             let y = terms[right.id].as_var().offset(right.offset);
-            return x == y
+            return x == y;
         }
         let lsym = terms[left.id].as_sym();
         let rsym = terms[right.id].as_sym();

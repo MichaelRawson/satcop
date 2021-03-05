@@ -1,6 +1,6 @@
 use crate::block::Id;
 use crate::builder::Builder;
-use crate::matrix::{EQUALITY, Matrix};
+use crate::matrix::{Matrix, EQUALITY};
 use crate::syntax::*;
 use std::rc::Rc;
 

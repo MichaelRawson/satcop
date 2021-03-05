@@ -51,5 +51,5 @@ impl BuildHasher for DigestHasherBuilder {
     }
 }
 
-pub(crate) type DigestSet = HashSet<Digest, DigestHasherBuilder>;
 pub(crate) type DigestMap<T> = HashMap<Digest, T, DigestHasherBuilder>;
+pub(crate) type DigestSet = HashSet<Digest, DigestHasherBuilder>;

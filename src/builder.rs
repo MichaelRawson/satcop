@@ -7,7 +7,6 @@ use std::rc::Rc;
 pub(crate) struct Builder {
     matrix: Matrix,
     vars: Block<Id<Trm>>,
-    args: Vec<Id<Trm>>,
     terms: DigestMap<Id<Trm>>,
     has_equality: bool,
 }
@@ -16,20 +15,18 @@ impl Default for Builder {
     fn default() -> Self {
         let matrix = Matrix::default();
         let vars = Block::default();
-        let args = vec![];
         let terms = DigestMap::default();
         let has_equality = false;
         let mut result = Self {
             matrix,
             vars,
-            args,
             terms,
             has_equality,
         };
         result.sym(Sym {
             arity: 0,
-            sort: Sort::Bool,
-            name: Name::Equality,
+            sort: Sort::Unused,
+            name: Name::Unused,
         });
         result.sym(Sym {
             arity: 2,
@@ -56,26 +53,29 @@ impl Builder {
         id
     }
 
-    fn term(&mut self, term: &Rc<Term>) -> Id<Trm> {
+    fn term(&mut self, is_goal: bool, term: &Rc<Term>) -> Id<Trm> {
         match &**term {
             Term::Var(Var(y)) => self.vars[Id::new(*y)],
             Term::Fun(f, ts) => {
-                let record = self.args.len();
-                for t in ts {
-                    let t = self.term(t);
-                    self.args.push(t);
+                if is_goal
+                    && self.matrix.syms[*f].arity == 0
+                    && self.matrix.syms[*f].sort == Sort::Obj
+                {
+                    self.matrix.goal_constants.insert(*f);
                 }
                 let mut digest = Digest::default();
                 digest.update(f.index);
-                for arg in &self.args[record..] {
-                    digest.update(arg.index);
+                let mut args = vec![];
+                for t in ts {
+                    let t = self.term(is_goal, t);
+                    args.push(t);
+                    digest.update(t.index);
                 }
                 if let Some(shared) = self.terms.get(&digest) {
-                    self.args.truncate(record);
                     return *shared;
                 }
                 let id = self.matrix.terms.push(Trm::sym(*f));
-                for arg in self.args.drain(record..) {
+                for arg in args {
                     self.matrix.terms.push(Trm::arg(arg));
                 }
                 self.terms.insert(digest, id);
@@ -84,9 +84,14 @@ impl Builder {
         }
     }
 
-    fn literal(&mut self, cls: Id<Cls>, literal: CNFLiteral) -> Id<Lit> {
+    fn literal(
+        &mut self,
+        cls: Id<Cls>,
+        is_goal: bool,
+        literal: CNFLiteral,
+    ) -> Id<Lit> {
         let pol = literal.pol;
-        let atom = self.term(&literal.atom);
+        let atom = self.term(is_goal, &literal.atom);
         let symbol = self.matrix.terms[atom].as_sym();
         if symbol == EQUALITY {
             self.has_equality = true;
@@ -120,7 +125,7 @@ impl Builder {
         let lstart = self.matrix.lits.len();
         let dstart = self.matrix.diseqs.len();
         for literal in clause.0 {
-            self.literal(id, literal);
+            self.literal(id, info.is_goal, literal);
         }
         let lstop = self.matrix.lits.len();
         let lits = Range::new(lstart, lstop);
@@ -265,6 +270,7 @@ impl Builder {
                         atom: t2,
                     });
                 }
+                Sort::Unused => unreachable!(),
             }
             self.clause(
                 CNFFormula(lits),

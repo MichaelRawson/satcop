@@ -6,6 +6,7 @@ use std::rc::Rc;
 pub(crate) enum Sort {
     Bool,
     Obj,
+    Unused,
 }
 
 pub(crate) enum Name {
@@ -16,6 +17,7 @@ pub(crate) enum Name {
     Distinct(String),
     Skolem(u32),
     Definition(u32),
+    Unused,
 }
 
 impl fmt::Display for Name {
@@ -27,6 +29,7 @@ impl fmt::Display for Name {
             Self::Distinct(distinct) => write!(f, "\"{}\"", distinct),
             Self::Skolem(n) => write!(f, "sK{}", n),
             Self::Definition(n) => write!(f, "sP{}", n),
+            Self::Unused => unreachable!(),
         }
     }
 }

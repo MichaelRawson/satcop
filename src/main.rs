@@ -26,7 +26,7 @@ fn report_err<T>(err: anyhow::Error) -> T {
 }
 
 fn go(options: Arc<Options>) {
-    let matrix = tptp::load(&options).unwrap_or_else(|err| {
+    let mut matrix = tptp::load(&options).unwrap_or_else(|err| {
         tstp::load_error(&err);
         report_err(err)
     });
@@ -34,7 +34,7 @@ fn go(options: Arc<Options>) {
         matrix.dump_cnf();
         std::process::exit(0);
     }
-    let mut search = Search::new(&matrix);
+    let mut search = Search::new(&mut matrix);
     if search.go() {
         let stdout = stdout();
         let mut lock = stdout.lock();
@@ -42,8 +42,7 @@ fn go(options: Arc<Options>) {
             .context("printing unsat")
             .unwrap_or_else(report_err);
         std::process::exit(0);
-    }
-    else {
+    } else {
         let stdout = stdout();
         let mut lock = stdout.lock();
         tstp::gaveup(&mut lock, &options)

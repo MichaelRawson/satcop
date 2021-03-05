@@ -101,7 +101,7 @@ impl Loader {
         &mut self,
         term: common::DefinedTerm,
         sort: syntax::Sort,
-    ) -> anyhow::Result<Rc<syntax::Term>> {
+    ) -> Rc<syntax::Term> {
         let (lookup, borrowed) = match term {
             common::DefinedTerm::Number(ref number) => {
                 let borrowed = match number {
@@ -132,7 +132,7 @@ impl Loader {
             lookup.insert(string, sym);
             sym
         };
-        Ok(Rc::new(syntax::Term::Fun(sym, vec![])))
+        Rc::new(syntax::Term::Fun(sym, vec![]))
     }
 
     fn fof_plain_term(
@@ -179,7 +179,7 @@ impl Loader {
     ) -> anyhow::Result<Rc<syntax::Term>> {
         match term {
             fof::DefinedTerm::Defined(defined) => {
-                self.defined_term(defined, sort)
+                Ok(self.defined_term(defined, sort))
             }
             fof::DefinedTerm::Atomic(atomic) => {
                 Err(Unsupported(atomic.to_string()).into())
