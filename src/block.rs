@@ -96,11 +96,6 @@ impl<T> Range<T> {
     pub(crate) fn is_empty(&self) -> bool {
         self.start == self.stop
     }
-
-    #[inline]
-    pub(crate) fn len(&self) -> u32 {
-        self.stop.index - self.start.index
-    }
 }
 
 impl<T> Clone for Range<T> {

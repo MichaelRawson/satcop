@@ -1,5 +1,5 @@
 use crate::binding::Bindings;
-use crate::block::{Block, Id, Off};
+use crate::block::{Id, Off};
 use crate::digest::{Digest, DigestMap, DigestSet};
 use crate::matrix::Matrix;
 use crate::syntax::{Cls, Lit, Sym, Trm};
@@ -23,32 +23,27 @@ extern "C" {
 
 pub(crate) struct Solver {
     sat: *mut PicoSAT,
-    constants: Block<Id<Sym>>,
     atoms: DigestMap<c_int>,
     cache: DigestSet,
     fresh: c_int,
 }
 
-impl Solver {
-    pub(crate) fn new(matrix: &Matrix) -> Self {
+impl Default for Solver {
+    fn default() -> Self {
         let sat = unsafe { picosat_init() };
-        let mut constants = Block::default();
-        constants.push(Id::new(0));
-        for id in &matrix.goal_constants {
-            constants.push(*id);
-        }
         let atoms = DigestMap::default();
         let cache = DigestSet::default();
         let fresh = 0;
         Self {
             sat,
-            constants,
             atoms,
             cache,
             fresh,
         }
     }
+}
 
+impl Solver {
     pub(crate) fn assert(
         &mut self,
         matrix: &Matrix,
@@ -56,15 +51,15 @@ impl Solver {
         clauses: &[Off<Cls>],
     ) {
         let mut scratch = vec![];
-        for clause in clauses {
-            for ground in self.constants.range() {
+        'clauses: for clause in clauses {
+            for ground in matrix.grounding_constants.range() {
                 let mut digest = Digest::default();
                 for lit in matrix.clauses[clause.id].lits {
                     let lit = self.literal(
                         matrix,
                         bindings,
                         Off::new(lit, clause.offset),
-                        self.constants[ground],
+                        matrix.grounding_constants[ground],
                     );
                     digest.update(lit as u32);
                     scratch.push(lit);
@@ -76,6 +71,7 @@ impl Solver {
                     unsafe { picosat_add(self.sat, 0) };
                 } else {
                     scratch.clear();
+                    continue 'clauses;
                 }
             }
         }

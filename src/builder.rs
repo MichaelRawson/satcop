@@ -2,12 +2,14 @@ use crate::block::{Block, Id, Range};
 use crate::digest::{Digest, DigestMap};
 use crate::matrix::*;
 use crate::syntax::*;
+use fnv::FnvHashSet;
 use std::rc::Rc;
 
 pub(crate) struct Builder {
     matrix: Matrix,
     vars: Block<Id<Trm>>,
     terms: DigestMap<Id<Trm>>,
+    goal_constants: FnvHashSet<Id<Sym>>,
     has_equality: bool,
 }
 
@@ -16,11 +18,13 @@ impl Default for Builder {
         let matrix = Matrix::default();
         let vars = Block::default();
         let terms = DigestMap::default();
+        let goal_constants = FnvHashSet::default();
         let has_equality = false;
         let mut result = Self {
             matrix,
             vars,
             terms,
+            goal_constants,
             has_equality,
         };
         result.sym(Sym {
@@ -39,6 +43,10 @@ impl Default for Builder {
 
 impl Builder {
     pub(crate) fn finish(mut self) -> Matrix {
+        self.matrix.grounding_constants.push(FALLBACK_GROUNDING);
+        for id in self.goal_constants.drain() {
+            self.matrix.grounding_constants.push(id);
+        }
         if self.has_equality {
             self.add_equality_axioms();
         }
@@ -61,7 +69,7 @@ impl Builder {
                     && self.matrix.syms[*f].arity == 0
                     && self.matrix.syms[*f].sort == Sort::Obj
                 {
-                    self.matrix.goal_constants.insert(*f);
+                    self.goal_constants.insert(*f);
                 }
                 let mut digest = Digest::default();
                 digest.update(f.index);
@@ -118,6 +126,7 @@ impl Builder {
         if clause.0.is_empty() || info.is_goal {
             self.matrix.start.push(id);
         }
+        self.matrix.max_var = std::cmp::max(self.matrix.max_var, Var(vars));
         while vars > self.vars.len().index {
             let var = Var(self.vars.len().index);
             self.vars.push(self.matrix.terms.push(Trm::var(var)));

@@ -31,7 +31,7 @@ fn go(options: Arc<Options>) {
         report_err(err)
     });
     if options.clausify {
-        matrix.dump_cnf();
+        matrix.print_cnf();
         std::process::exit(0);
     }
     let mut search = Search::new(&mut matrix);

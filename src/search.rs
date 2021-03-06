@@ -21,16 +21,18 @@ pub(crate) struct Search<'matrix> {
     path: Block<Off<Lit>>,
     clauses: Vec<Off<Cls>>,
     offset: u32,
+    depth_limit: u32,
 }
 
 impl<'matrix> Search<'matrix> {
     pub(crate) fn new(matrix: &'matrix mut Matrix) -> Self {
         let rng = SmallRng::seed_from_u64(0);
-        let solver = sat::Solver::new(matrix);
+        let solver = sat::Solver::default();
         let bindings = Bindings::default();
         let path = Block::default();
         let clauses = vec![];
         let offset = 0;
+        let depth_limit = 0;
         Self {
             matrix,
             rng,
@@ -39,28 +41,28 @@ impl<'matrix> Search<'matrix> {
             path,
             clauses,
             offset,
+            depth_limit,
         }
     }
 
     pub(crate) fn go(&mut self) -> bool {
-        let mut limit = 0;
         if self.matrix.start.range().is_empty() {
             return false;
         }
         loop {
             for start in self.matrix.start.range() {
-                self.start(self.matrix.start[start], limit);
+                self.start(self.matrix.start[start]);
             }
             if !self.solver.solve() {
                 return true;
             }
             if !self.solver.model_changed() {
-                limit += 1;
+                self.depth_limit += 1;
             }
         }
     }
 
-    fn start(&mut self, id: Id<Cls>, limit: u32) -> bool {
+    fn start(&mut self, id: Id<Cls>) -> bool {
         let cls = self.matrix.clauses[id];
         self.clauses.push(Off::new(id, 0));
         self.bindings.ensure_capacity(Var(cls.vars));
@@ -71,7 +73,7 @@ impl<'matrix> Search<'matrix> {
         promises.shuffle(&mut self.rng);
         for id in promises {
             let lit = Off::new(id, 0);
-            if !self.prove(lit, limit) {
+            if !self.prove(lit) {
                 self.bindings.clear();
                 self.clauses.clear();
                 return false;
@@ -80,7 +82,7 @@ impl<'matrix> Search<'matrix> {
         true
     }
 
-    fn prove(&mut self, goal: Off<Lit>, limit: u32) -> bool {
+    fn prove(&mut self, goal: Off<Lit>) -> bool {
         if self
             .solver
             .is_assigned_false(self.matrix, &self.bindings, goal)
@@ -150,9 +152,19 @@ impl<'matrix> Search<'matrix> {
             }
         }
 
-        if limit == 0 {
+        if self.depth_limit <= self.path.len().index {
             return false;
         }
+
+        /*
+        for pid in self.path.range() {
+            self.matrix.print_literal(&self.bindings, self.path[pid]);
+            println!()
+        }
+        self.matrix.print_literal(&self.bindings, goal);
+        println!();
+        println!("-------------------");
+        */
 
         let save_clauses = self.clauses.len();
         let save_offset = self.offset;
@@ -163,10 +175,6 @@ impl<'matrix> Search<'matrix> {
         alternatives.shuffle(&mut self.rng);
         'extensions: for pos in alternatives {
             let cls = &self.matrix.clauses[pos.cls];
-            let mut clen = cls.lits.len();
-            if clen > limit {
-                continue;
-            }
             self.bindings.ensure_capacity(Var(self.offset + cls.vars));
             if self.bindings.unify(
                 &self.matrix.syms,
@@ -186,13 +194,12 @@ impl<'matrix> Search<'matrix> {
                 promises.shuffle(&mut self.rng);
                 for id in promises {
                     let lit = Off::new(id, save_offset);
-                    if !self.prove(lit, limit - clen) {
+                    if !self.prove(lit) {
                         self.offset = save_offset;
                         self.clauses.truncate(save_clauses);
                         self.bindings.undo_to_mark(save_bindings);
                         continue 'extensions;
                     }
-                    clen -= 1;
                 }
                 self.path.pop();
                 return true;

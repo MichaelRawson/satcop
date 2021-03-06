@@ -52,7 +52,7 @@ impl fmt::Debug for Sym {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct Var(pub(crate) u32);
 
 impl Var {
