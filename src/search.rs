@@ -50,6 +50,7 @@ impl<'matrix> Search<'matrix> {
             return false;
         }
         loop {
+            dbg!(self.depth_limit);
             for start in self.matrix.start.range() {
                 self.start(self.matrix.start[start]);
             }
@@ -95,19 +96,6 @@ impl<'matrix> Search<'matrix> {
         let sym = self.matrix.terms[atom].as_sym();
         let atom = Off::new(atom, offset);
 
-        for cls in &self.clauses {
-            let diseqs = self.matrix.clauses[cls.id].diseqs;
-            for diseq in &self.matrix.diseqs[diseqs] {
-                if self.bindings.equal(
-                    &self.matrix.syms,
-                    &self.matrix.terms,
-                    Off::new(diseq.left, cls.offset),
-                    Off::new(diseq.right, cls.offset),
-                ) {
-                    return false;
-                }
-            }
-        }
         let save_bindings = self.bindings.mark();
         // reductions
         for pid in self.path.range() {
@@ -140,7 +128,8 @@ impl<'matrix> Search<'matrix> {
                     &self.matrix.terms,
                     atom,
                     patom,
-                ) {
+                ) && self.check_constraints()
+                {
                     self.solver.assert(
                         self.matrix,
                         &self.bindings,
@@ -156,25 +145,23 @@ impl<'matrix> Search<'matrix> {
             return false;
         }
 
+        // extensions
+        let save_clauses = self.clauses.len();
+        let save_offset = self.offset;
+        self.path.push(goal);
+        let mut alternatives =
+            self.matrix.index[sym].pol[!pol as usize].clone();
+        alternatives.shuffle(&mut self.rng);
+
         /*
         for pid in self.path.range() {
             self.matrix.print_literal(&self.bindings, self.path[pid]);
             println!()
         }
-        self.matrix.print_literal(&self.bindings, goal);
-        println!();
         println!("-------------------");
         */
-
-        let save_clauses = self.clauses.len();
-        let save_offset = self.offset;
-        // extensions
-        self.path.push(goal);
-        let mut alternatives =
-            self.matrix.index[sym].pol[!pol as usize].clone();
-        alternatives.shuffle(&mut self.rng);
         'extensions: for pos in alternatives {
-            let cls = &self.matrix.clauses[pos.cls];
+            let cls = self.matrix.clauses[pos.cls];
             self.bindings.ensure_capacity(Var(self.offset + cls.vars));
             if self.bindings.unify(
                 &self.matrix.syms,
@@ -183,9 +170,15 @@ impl<'matrix> Search<'matrix> {
                 Off::new(self.matrix.lits[pos.lit].atom, self.offset),
             ) {
                 self.clauses.push(Off::new(pos.cls, self.offset));
+                self.offset += cls.vars;
+                if !self.check_constraints() {
+                    self.offset = save_offset;
+                    self.clauses.truncate(save_clauses);
+                    self.bindings.undo_to_mark(save_bindings);
+                    continue 'extensions;
+                }
                 self.solver
                     .assert(self.matrix, &self.bindings, &self.clauses);
-                self.offset += cls.vars;
                 let mut promises = cls
                     .lits
                     .into_iter()
@@ -209,5 +202,22 @@ impl<'matrix> Search<'matrix> {
         self.offset = save_offset;
         self.path.pop();
         false
+    }
+
+    fn check_constraints(&mut self) -> bool {
+        for cls in &self.clauses {
+            let diseqs = self.matrix.clauses[cls.id].diseqs;
+            for diseq in &self.matrix.diseqs[diseqs] {
+                if self.bindings.equal(
+                    &self.matrix.syms,
+                    &self.matrix.terms,
+                    Off::new(diseq.left, cls.offset),
+                    Off::new(diseq.right, cls.offset),
+                ) {
+                    return false;
+                }
+            }
+        }
+        true
     }
 }

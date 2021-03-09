@@ -66,7 +66,7 @@ impl Matrix {
     fn print_term(&self, bindings: &Bindings, term: Off<Trm>) {
         let mut term = bindings.resolve(&self.terms, term);
         if self.terms[term.id].is_var() {
-            print!("X{}", self.terms[term.id].as_var().0);
+            print!("X{}", self.terms[term.id].as_var().offset(term.offset).0);
         } else {
             let sym = self.terms[term.id].as_sym();
             if sym == EQUALITY {
