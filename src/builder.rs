@@ -1,15 +1,16 @@
 use crate::block::{Block, Id, Range};
 use crate::digest::{Digest, DigestMap};
-use crate::matrix::*;
 use crate::syntax::*;
-use fnv::FnvHashSet;
+use fnv::{FnvHashMap, FnvHashSet};
 use std::rc::Rc;
+
+pub(crate) const FALLBACK_GROUNDING: Id<Symbol> = Id::new(0);
 
 pub(crate) struct Builder {
     matrix: Matrix,
-    vars: Block<Id<Trm>>,
-    terms: DigestMap<Id<Trm>>,
-    goal_constants: FnvHashSet<Id<Sym>>,
+    vars: Block<Id<Term>>,
+    terms: DigestMap<Id<Term>>,
+    goal_constants: FnvHashMap<Id<Symbol>, u32>,
     has_equality: bool,
 }
 
@@ -18,7 +19,7 @@ impl Default for Builder {
         let matrix = Matrix::default();
         let vars = Block::default();
         let terms = DigestMap::default();
-        let goal_constants = FnvHashSet::default();
+        let goal_constants = FnvHashMap::default();
         let has_equality = false;
         let mut result = Self {
             matrix,
@@ -27,12 +28,12 @@ impl Default for Builder {
             goal_constants,
             has_equality,
         };
-        result.sym(Sym {
+        result.new_symbol(Symbol {
             arity: 0,
             sort: Sort::Unused,
             name: Name::Unused,
         });
-        result.sym(Sym {
+        result.new_symbol(Symbol {
             arity: 2,
             sort: Sort::Bool,
             name: Name::Equality,
@@ -43,33 +44,119 @@ impl Default for Builder {
 
 impl Builder {
     pub(crate) fn finish(mut self) -> Matrix {
-        self.matrix.grounding_constants.push(FALLBACK_GROUNDING);
-        for id in self.goal_constants.drain() {
-            self.matrix.grounding_constants.push(id);
-        }
         if self.has_equality {
             self.add_equality_axioms();
         }
+        self.matrix.grounding_constant = self
+            .goal_constants
+            .drain()
+            .max_by_key(|(_, count)| *count)
+            .map(|(sym, _)| sym)
+            .unwrap_or(FALLBACK_GROUNDING);
         self.matrix
     }
 
-    pub(crate) fn sym(&mut self, sym: Sym) -> Id<Sym> {
-        let id = self.matrix.syms.push(sym);
+    pub(crate) fn new_symbol(&mut self, sym: Symbol) -> Id<Symbol> {
+        let id = self.matrix.symbols.push(sym);
         self.matrix.index.block.push(Entry {
             pol: [vec![], vec![]],
         });
         id
     }
 
-    fn term(&mut self, is_goal: bool, term: &Rc<Term>) -> Id<Trm> {
+    pub(crate) fn clause(
+        &mut self,
+        clause: CNF,
+        vars: u32,
+        info: Info,
+        constraints: bool,
+    ) {
+        let id = self.matrix.clauses.len();
+        if clause.0.is_empty() || info.is_goal {
+            self.matrix.start.push(id);
+        }
+        while vars > self.vars.len().index {
+            let var = Var(self.vars.len().index);
+            self.vars.push(self.matrix.terms.push(Term::var(var)));
+        }
+        let mut disequations = FnvHashSet::default();
+        let lstart = self.matrix.literals.len();
+        for literal in clause.0 {
+            self.literal(&mut disequations, id, info.is_goal, literal);
+        }
+        let lstop = self.matrix.literals.len();
+        let literals = Range::new(lstart, lstop);
+        for id1 in literals {
+            let lit1 = self.matrix.literals[id1];
+            for id2 in Range::new(Id::new(id1.index + 1), lstop) {
+                let lit2 = self.matrix.literals[id2];
+                if lit1.pol != lit2.pol {
+                    let left = lit1.atom;
+                    let right = lit2.atom;
+                    let sym1 = self.matrix.terms[left];
+                    let sym2 = self.matrix.terms[right];
+                    if sym1 == sym2 {
+                        disequations.insert(Disequation { left, right });
+                    }
+                }
+            }
+        }
+        let dstart = self.matrix.disequations.len();
+        if constraints {
+            for diseq in disequations {
+                if self.possibly_equal(diseq.left, diseq.right) {
+                    self.matrix.disequations.push(diseq);
+                }
+            }
+        }
+        let dstop = self.matrix.disequations.len();
+        let disequations = Range::new(dstart, dstop);
+        self.matrix.clauses.push(Clause {
+            vars,
+            literals,
+            disequations,
+        });
+        self.matrix.info.block.push(info);
+    }
+
+    fn literal(
+        &mut self,
+        disequations: &mut FnvHashSet<Disequation>,
+        cls: Id<Clause>,
+        is_goal: bool,
+        literal: NNFLiteral,
+    ) -> Id<Literal> {
+        let pol = literal.pol;
+        let atom = self.term(is_goal, &literal.atom);
+        let symbol = self.matrix.terms[atom].as_sym();
+        if symbol == EQUALITY {
+            self.has_equality = true;
+            if pol {
+                let mut left =
+                    self.matrix.terms[Id::new(atom.index + 1)].as_arg();
+                let mut right =
+                    self.matrix.terms[Id::new(atom.index + 2)].as_arg();
+                if left > right {
+                    std::mem::swap(&mut left, &mut right);
+                }
+                disequations.insert(Disequation { left, right });
+            }
+        }
+        let lit = self.matrix.literals.push(Literal { pol, atom });
+        self.matrix.index[symbol].pol[pol as usize]
+            .push(Position { cls, lit });
+        lit
+    }
+
+    fn term(&mut self, is_goal: bool, term: &Rc<FOFTerm>) -> Id<Term> {
         match &**term {
-            Term::Var(Var(y)) => self.vars[Id::new(*y)],
-            Term::Fun(f, ts) => {
+            FOFTerm::Var(Var(y)) => self.vars[Id::new(*y)],
+            FOFTerm::Fun(f, ts) => {
                 if is_goal
-                    && self.matrix.syms[*f].arity == 0
-                    && self.matrix.syms[*f].sort == Sort::Obj
+                    && self.matrix.symbols[*f].arity == 0
+                    && self.matrix.symbols[*f].sort == Sort::Obj
                 {
-                    self.goal_constants.insert(*f);
+                    *self.goal_constants.entry(*f).or_default() += 1;
                 }
                 let mut digest = Digest::default();
                 digest.update(f.index);
@@ -82,9 +169,9 @@ impl Builder {
                 if let Some(shared) = self.terms.get(&digest) {
                     return *shared;
                 }
-                let id = self.matrix.terms.push(Trm::sym(*f));
+                let id = self.matrix.terms.push(Term::sym(*f));
                 for arg in args {
-                    self.matrix.terms.push(Trm::arg(arg));
+                    self.matrix.terms.push(Term::arg(arg));
                 }
                 self.terms.insert(digest, id);
                 id
@@ -92,150 +179,115 @@ impl Builder {
         }
     }
 
-    fn literal(
-        &mut self,
-        cls: Id<Cls>,
-        is_goal: bool,
-        literal: CNFLiteral,
-    ) -> Id<Lit> {
-        let pol = literal.pol;
-        let atom = self.term(is_goal, &literal.atom);
-        let symbol = self.matrix.terms[atom].as_sym();
-        if symbol == EQUALITY {
-            self.has_equality = true;
-            if pol {
-                let left = self.matrix.terms[Id::new(atom.index + 1)].as_arg();
-                let right =
-                    self.matrix.terms[Id::new(atom.index + 2)].as_arg();
-                self.matrix.diseqs.push(DisEq { left, right });
+    fn possibly_equal(&self, mut left: Id<Term>, mut right: Id<Term>) -> bool {
+        if left == right {
+            return true;
+        }
+        if self.matrix.terms[left].is_var() {
+            return !self.occurs(self.matrix.terms[left].as_var(), right);
+        }
+        if self.matrix.terms[right].is_var() {
+            return !self.occurs(self.matrix.terms[right].as_var(), left);
+        }
+        let lsym = self.matrix.terms[left].as_sym();
+        let rsym = self.matrix.terms[right].as_sym();
+        if lsym != rsym {
+            return false;
+        }
+        let arity = self.matrix.symbols[lsym].arity;
+        for _ in 0..arity {
+            left.index += 1;
+            right.index += 1;
+            if !self.possibly_equal(
+                self.matrix.terms[left].as_arg(),
+                self.matrix.terms[right].as_arg(),
+            ) {
+                return false;
             }
         }
-        let id = self.matrix.lits.push(Lit { pol, atom });
-        self.matrix.index[symbol].pol[pol as usize].push(Pos { cls, lit: id });
-        id
+        true
     }
 
-    pub(crate) fn clause(
-        &mut self,
-        clause: CNFFormula,
-        vars: u32,
-        info: Info,
-        constraints: bool,
-    ) {
-        let id = self.matrix.clauses.len();
-        if clause.0.is_empty() || info.is_goal {
-            self.matrix.start.push(id);
-        }
-        self.matrix.max_var = std::cmp::max(self.matrix.max_var, Var(vars));
-        while vars > self.vars.len().index {
-            let var = Var(self.vars.len().index);
-            self.vars.push(self.matrix.terms.push(Trm::var(var)));
-        }
-        let lstart = self.matrix.lits.len();
-        let dstart = self.matrix.diseqs.len();
-        for literal in clause.0 {
-            self.literal(id, info.is_goal, literal);
-        }
-        let lstop = self.matrix.lits.len();
-        let lits = Range::new(lstart, lstop);
-        for id1 in lits {
-            let lit1 = self.matrix.lits[id1];
-            for id2 in Range::new(Id::new(id1.index + 1), lstop) {
-                let lit2 = self.matrix.lits[id2];
-                if lit1.pol != lit2.pol {
-                    let left = lit1.atom;
-                    let right = lit2.atom;
-                    let sym1 = self.matrix.terms[left];
-                    let sym2 = self.matrix.terms[right];
-                    if sym1 == sym2 {
-                        self.matrix.diseqs.push(DisEq { left, right });
-                    }
+    fn occurs(&self, x: Var, mut t: Id<Term>) -> bool {
+        if self.matrix.terms[t].is_var() {
+            x == self.matrix.terms[t].as_var()
+        } else {
+            let sym = self.matrix.terms[t].as_sym();
+            let arity = self.matrix.symbols[sym].arity;
+            for _ in 0..arity {
+                t.index += 1;
+                if self.occurs(x, self.matrix.terms[t].as_arg()) {
+                    return true;
                 }
             }
+            false
         }
-        if !constraints {
-            self.matrix.diseqs.truncate(dstart);
-        }
-        let dstop = self.matrix.diseqs.len();
-        let diseqs = Range::new(dstart, dstop);
-        self.matrix.clauses.push(Cls { vars, lits, diseqs });
-        self.matrix.info.block.push(info);
     }
 
     fn add_equality_axioms(&mut self) {
-        let v0 = Rc::new(Term::Var(Var(0)));
-        let v1 = Rc::new(Term::Var(Var(1)));
-        let v2 = Rc::new(Term::Var(Var(2)));
+        let v0 = Rc::new(FOFTerm::Var(Var(0)));
+        let v1 = Rc::new(FOFTerm::Var(Var(1)));
+        let v2 = Rc::new(FOFTerm::Var(Var(2)));
         self.clause(
-            CNFFormula(vec![CNFLiteral {
+            CNF(vec![NNFLiteral {
                 pol: true,
-                atom: Rc::new(Term::Fun(
+                atom: Rc::new(FOFTerm::Fun(
                     EQUALITY,
                     vec![v0.clone(), v0.clone()],
                 )),
             }]),
             1,
-            Info {
-                source: Source::EqualityAxiom,
-                name: "reflexivity".into(),
-                is_goal: false,
-            },
+            Info { is_goal: false },
             false,
         );
         self.clause(
-            CNFFormula(vec![
-                CNFLiteral {
+            CNF(vec![
+                NNFLiteral {
                     pol: false,
-                    atom: Rc::new(Term::Fun(
+                    atom: Rc::new(FOFTerm::Fun(
                         EQUALITY,
                         vec![v0.clone(), v1.clone()],
                     )),
                 },
-                CNFLiteral {
+                NNFLiteral {
                     pol: true,
-                    atom: Rc::new(Term::Fun(
+                    atom: Rc::new(FOFTerm::Fun(
                         EQUALITY,
                         vec![v1.clone(), v0.clone()],
                     )),
                 },
             ]),
             2,
-            Info {
-                source: Source::EqualityAxiom,
-                name: "symmetry".into(),
-                is_goal: false,
-            },
+            Info { is_goal: false },
             true,
         );
         self.clause(
-            CNFFormula(vec![
-                CNFLiteral {
+            CNF(vec![
+                NNFLiteral {
                     pol: false,
-                    atom: Rc::new(Term::Fun(
+                    atom: Rc::new(FOFTerm::Fun(
                         EQUALITY,
                         vec![v0.clone(), v1.clone()],
                     )),
                 },
-                CNFLiteral {
+                NNFLiteral {
                     pol: false,
-                    atom: Rc::new(Term::Fun(EQUALITY, vec![v1, v2.clone()])),
+                    atom: Rc::new(FOFTerm::Fun(
+                        EQUALITY,
+                        vec![v1, v2.clone()],
+                    )),
                 },
-                CNFLiteral {
+                NNFLiteral {
                     pol: true,
-                    atom: Rc::new(Term::Fun(EQUALITY, vec![v0, v2])),
+                    atom: Rc::new(FOFTerm::Fun(EQUALITY, vec![v0, v2])),
                 },
             ]),
             3,
-            Info {
-                source: Source::EqualityAxiom,
-                name: "transitivity".into(),
-                is_goal: false,
-            },
+            Info { is_goal: false },
             true,
         );
-        let cong_name: Rc<str> = "congruence".into();
-        for id in self.matrix.syms.range() {
-            let sym = &self.matrix.syms[id];
+        for id in self.matrix.symbols.range() {
+            let sym = &self.matrix.symbols[id];
             if !sym.name.needs_congruence() {
                 continue;
             }
@@ -248,11 +300,11 @@ impl Builder {
             let mut args1 = vec![];
             let mut args2 = vec![];
             for i in 0..arity {
-                let v1 = Rc::new(Term::Var(Var(2 * i)));
-                let v2 = Rc::new(Term::Var(Var(2 * i + 1)));
-                lits.push(CNFLiteral {
+                let v1 = Rc::new(FOFTerm::Var(Var(2 * i)));
+                let v2 = Rc::new(FOFTerm::Var(Var(2 * i + 1)));
+                lits.push(NNFLiteral {
                     pol: false,
-                    atom: Rc::new(Term::Fun(
+                    atom: Rc::new(FOFTerm::Fun(
                         EQUALITY,
                         vec![v1.clone(), v2.clone()],
                     )),
@@ -260,37 +312,28 @@ impl Builder {
                 args1.push(v1.clone());
                 args2.push(v2.clone());
             }
-            let t1 = Rc::new(Term::Fun(id, args1));
-            let t2 = Rc::new(Term::Fun(id, args2));
+            let t1 = Rc::new(FOFTerm::Fun(id, args1));
+            let t2 = Rc::new(FOFTerm::Fun(id, args2));
             match sort {
                 Sort::Obj => {
-                    lits.push(CNFLiteral {
+                    lits.push(NNFLiteral {
                         pol: true,
-                        atom: Rc::new(Term::Fun(EQUALITY, vec![t1, t2])),
+                        atom: Rc::new(FOFTerm::Fun(EQUALITY, vec![t1, t2])),
                     });
                 }
                 Sort::Bool => {
-                    lits.push(CNFLiteral {
+                    lits.push(NNFLiteral {
                         pol: false,
                         atom: t1,
                     });
-                    lits.push(CNFLiteral {
+                    lits.push(NNFLiteral {
                         pol: true,
                         atom: t2,
                     });
                 }
                 Sort::Unused => unreachable!(),
             }
-            self.clause(
-                CNFFormula(lits),
-                arity * 2,
-                Info {
-                    source: Source::EqualityAxiom,
-                    name: cong_name.clone(),
-                    is_goal: false,
-                },
-                true,
-            );
+            self.clause(CNF(lits), arity * 2, Info { is_goal: false }, true);
         }
     }
 }

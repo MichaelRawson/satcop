@@ -2,7 +2,6 @@ mod binding;
 mod block;
 mod builder;
 mod digest;
-mod matrix;
 mod options;
 mod pp;
 mod sat;

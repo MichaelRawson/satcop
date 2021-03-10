@@ -1,6 +1,9 @@
-use crate::block::{Id, Range};
+use crate::binding::Bindings;
+use crate::block::{Block, BlockMap, Id, Off, Range};
 use std::fmt;
 use std::rc::Rc;
+
+pub(crate) const EQUALITY: Id<Symbol> = Id::new(1);
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum Sort {
@@ -23,7 +26,7 @@ pub(crate) enum Name {
 impl fmt::Display for Name {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Self::Equality => write!(f, "="),
+            Self::Equality => write!(f, "sPE"),
             Self::Atom(s) | Self::Number(s) => write!(f, "{}", s),
             Self::Quoted(quoted) => write!(f, "'{}'", quoted),
             Self::Distinct(distinct) => write!(f, "\"{}\"", distinct),
@@ -40,19 +43,19 @@ impl Name {
     }
 }
 
-pub(crate) struct Sym {
+pub(crate) struct Symbol {
     pub(crate) arity: u32,
     pub(crate) sort: Sort,
     pub(crate) name: Name,
 }
 
-impl fmt::Debug for Sym {
+impl fmt::Debug for Symbol {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}/{}", self.name, self.arity)
     }
 }
 
-#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct Var(pub(crate) u32);
 
 impl Var {
@@ -68,18 +71,18 @@ impl fmt::Debug for Var {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct Trm(i32);
+pub(crate) struct Term(i32);
 
-impl Trm {
+impl Term {
     pub(crate) fn var(x: Var) -> Self {
         Self(-(x.0 as i32))
     }
 
-    pub(crate) fn sym(f: Id<Sym>) -> Self {
+    pub(crate) fn sym(f: Id<Symbol>) -> Self {
         Self(f.index as i32)
     }
 
-    pub(crate) fn arg(arg: Id<Trm>) -> Self {
+    pub(crate) fn arg(arg: Id<Self>) -> Self {
         Self(arg.index as i32)
     }
 
@@ -91,28 +94,28 @@ impl Trm {
         Var(-self.0 as u32)
     }
 
-    pub(crate) fn as_sym(&self) -> Id<Sym> {
+    pub(crate) fn as_sym(&self) -> Id<Symbol> {
         Id::new(self.0 as u32)
     }
 
-    pub(crate) fn as_arg(&self) -> Id<Trm> {
+    pub(crate) fn as_arg(&self) -> Id<Self> {
         Id::new(self.0 as u32)
     }
 }
 
-impl fmt::Debug for Trm {
+impl fmt::Debug for Term {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.0)
     }
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct Lit {
+pub(crate) struct Literal {
     pub(crate) pol: bool,
-    pub(crate) atom: Id<Trm>,
+    pub(crate) atom: Id<Term>,
 }
 
-impl fmt::Debug for Lit {
+impl fmt::Debug for Literal {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if !self.pol {
             write!(f, "¬")?;
@@ -121,26 +124,134 @@ impl fmt::Debug for Lit {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct DisEq {
-    pub(crate) left: Id<Trm>,
-    pub(crate) right: Id<Trm>,
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct Disequation {
+    pub(crate) left: Id<Term>,
+    pub(crate) right: Id<Term>,
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct Cls {
+pub(crate) struct Clause {
     pub(crate) vars: u32,
-    pub(crate) lits: Range<Lit>,
-    pub(crate) diseqs: Range<DisEq>,
+    pub(crate) literals: Range<Literal>,
+    pub(crate) disequations: Range<Disequation>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Position {
+    pub(crate) cls: Id<Clause>,
+    pub(crate) lit: Id<Literal>,
+}
+
+#[derive(Debug)]
+pub(crate) struct Entry {
+    pub(crate) pol: [Vec<Position>; 2],
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct Info {
+    pub(crate) is_goal: bool,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct Matrix {
+    pub(crate) symbols: Block<Symbol>,
+    pub(crate) terms: Block<Term>,
+    pub(crate) literals: Block<Literal>,
+    pub(crate) disequations: Block<Disequation>,
+    pub(crate) clauses: Block<Clause>,
+    pub(crate) info: BlockMap<Clause, Info>,
+    pub(crate) start: Block<Id<Clause>>,
+    pub(crate) index: BlockMap<Symbol, Entry>,
+    pub(crate) grounding_constant: Id<Symbol>,
+}
+
+impl Matrix {
+    pub(crate) fn print_cnf(&self) {
+        let mut bindings = Bindings::default();
+        for id in self.clauses.range() {
+            print!("cnf(c{}, ", id.index);
+            if self.info[id].is_goal {
+                print!("negated_conjecture, ");
+            } else {
+                print!("axiom, ");
+            }
+            let clause = self.clauses[id];
+            if clause.literals.is_empty() {
+                print!("$false")
+            } else {
+                bindings.ensure_capacity(Var(clause.vars));
+                for id in clause.literals {
+                    if id != clause.literals.start {
+                        print!(" | ");
+                    }
+                    self.print_literal(&bindings, Off::new(id, 0));
+                }
+            }
+            println!(").");
+            if clause.disequations.is_empty() {
+                continue;
+            }
+            print!("% ");
+            for id in clause.disequations {
+                if id > clause.disequations.start {
+                    print!(", ");
+                }
+                let Disequation { left, right } = self.disequations[id];
+                self.print_term(&bindings, Off::new(left, 0));
+                print!(" != ");
+                self.print_term(&bindings, Off::new(right, 0));
+            }
+            println!();
+        }
+    }
+
+    pub(crate) fn print_literal(
+        &self,
+        bindings: &Bindings,
+        lit: Off<Literal>,
+    ) {
+        if !self.literals[lit.id].pol {
+            print!("~");
+        }
+        self.print_term(
+            &bindings,
+            Off::new(self.literals[lit.id].atom, lit.offset),
+        );
+    }
+
+    fn print_term(&self, bindings: &Bindings, term: Off<Term>) {
+        let mut term = bindings.resolve(&self.terms, term);
+        if self.terms[term.id].is_var() {
+            print!("X{}", self.terms[term.id].as_var().offset(term.offset).0);
+        } else {
+            let sym = self.terms[term.id].as_sym();
+            let arity = self.symbols[sym].arity;
+            print!("{}", self.symbols[sym].name);
+            if arity == 0 {
+                return;
+            }
+            print!("(");
+            for i in 0..arity {
+                if i != 0 {
+                    print!(",");
+                }
+                term.id.index += 1;
+                let arg = self.terms[term.id].as_arg();
+                self.print_term(bindings, Off::new(arg, term.offset));
+            }
+            print!(")");
+        }
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum Term {
+pub(crate) enum FOFTerm {
     Var(Var),
-    Fun(Id<Sym>, Vec<Rc<Term>>),
+    Fun(Id<Symbol>, Vec<Rc<FOFTerm>>),
 }
 
-impl fmt::Debug for Term {
+impl fmt::Debug for FOFTerm {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Self::Var(x) => x.fmt(f),
@@ -150,7 +261,7 @@ impl fmt::Debug for Term {
     }
 }
 
-impl Term {
+impl FOFTerm {
     fn vars(&self, vars: &mut Vec<bool>) {
         match self {
             Self::Var(x) => {
@@ -166,12 +277,12 @@ impl Term {
 }
 
 #[derive(Clone)]
-pub(crate) enum Atom {
+pub(crate) enum FOFAtom {
     Bool(bool),
-    Pred(Rc<Term>),
+    Pred(Rc<FOFTerm>),
 }
 
-impl Atom {
+impl FOFAtom {
     pub(crate) fn vars(&self, vars: &mut Vec<bool>) {
         match self {
             Self::Bool(_) => {}
@@ -182,7 +293,7 @@ impl Atom {
     }
 }
 
-impl fmt::Debug for Atom {
+impl fmt::Debug for FOFAtom {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Self::Bool(b) => write!(f, "{:?}", b),
@@ -191,17 +302,17 @@ impl fmt::Debug for Atom {
     }
 }
 
-pub(crate) enum Formula {
-    Atom(Atom),
-    Not(Box<Formula>),
-    And(Vec<Formula>),
-    Or(Vec<Formula>),
-    Eqv(Box<Formula>, Box<Formula>),
-    All(Var, Box<Formula>),
-    Ex(Var, Box<Formula>),
+pub(crate) enum FOF {
+    Atom(FOFAtom),
+    Not(Box<FOF>),
+    And(Vec<FOF>),
+    Or(Vec<FOF>),
+    Eqv(Box<FOF>, Box<FOF>),
+    All(Var, Box<FOF>),
+    Ex(Var, Box<FOF>),
 }
 
-impl Formula {
+impl FOF {
     pub(crate) fn negated(self) -> Self {
         Self::Not(Box::new(self))
     }
@@ -227,7 +338,7 @@ impl Formula {
     }
 }
 
-impl fmt::Debug for Formula {
+impl fmt::Debug for FOF {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Self::Atom(atom) => write!(f, "{:?}", atom),
@@ -241,26 +352,13 @@ impl fmt::Debug for Formula {
     }
 }
 
-#[derive(Debug, Clone)]
-pub(crate) enum Source {
-    EqualityAxiom,
-    File(Rc<str>),
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct Info {
-    pub(crate) source: Source,
-    pub(crate) name: Rc<str>,
-    pub(crate) is_goal: bool,
-}
-
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct CNFLiteral {
+pub(crate) struct NNFLiteral {
     pub(crate) pol: bool,
-    pub(crate) atom: Rc<Term>,
+    pub(crate) atom: Rc<FOFTerm>,
 }
 
-impl fmt::Debug for CNFLiteral {
+impl fmt::Debug for NNFLiteral {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if !self.pol {
             write!(f, "¬")?;
@@ -269,9 +367,18 @@ impl fmt::Debug for CNFLiteral {
     }
 }
 
-pub(crate) struct CNFFormula(pub(crate) Vec<CNFLiteral>);
+#[derive(Debug)]
+pub(crate) enum NNF {
+    Lit(bool, Rc<FOFTerm>),
+    Or(Vec<NNF>),
+    And(Vec<NNF>),
+    All(Var, Box<NNF>),
+    Ex(Var, Box<NNF>),
+}
 
-impl fmt::Debug for CNFFormula {
+pub(crate) struct CNF(pub(crate) Vec<NNFLiteral>);
+
+impl fmt::Debug for CNF {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:?}", self.0)
     }

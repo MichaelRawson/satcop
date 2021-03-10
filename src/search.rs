@@ -1,16 +1,15 @@
 use crate::binding::Bindings;
 use crate::block::{Block, Id, Off};
-use crate::matrix::Matrix;
 use crate::sat;
-use crate::syntax::{Cls, Lit, Trm, Var};
+use crate::syntax::{Clause, Literal, Matrix, Term, Var};
 use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
 use rand::SeedableRng;
 
 #[derive(Debug, Clone, Copy)]
 struct Constraint {
-    left: Off<Trm>,
-    right: Off<Trm>,
+    left: Off<Term>,
+    right: Off<Term>,
 }
 
 pub(crate) struct Search<'matrix> {
@@ -18,8 +17,8 @@ pub(crate) struct Search<'matrix> {
     rng: SmallRng,
     solver: sat::Solver,
     bindings: Bindings,
-    path: Block<Off<Lit>>,
-    clauses: Vec<Off<Cls>>,
+    path: Block<Off<Literal>>,
+    clauses: Vec<Off<Clause>>,
     offset: u32,
     depth_limit: u32,
 }
@@ -50,9 +49,10 @@ impl<'matrix> Search<'matrix> {
             return false;
         }
         loop {
-            dbg!(self.depth_limit);
             for start in self.matrix.start.range() {
-                self.start(self.matrix.start[start]);
+                if self.start(self.matrix.start[start]) {
+                    return true;
+                }
             }
             if !self.solver.solve() {
                 return true;
@@ -63,14 +63,14 @@ impl<'matrix> Search<'matrix> {
         }
     }
 
-    fn start(&mut self, id: Id<Cls>) -> bool {
+    fn start(&mut self, id: Id<Clause>) -> bool {
         let cls = self.matrix.clauses[id];
         self.clauses.push(Off::new(id, 0));
         self.bindings.ensure_capacity(Var(cls.vars));
         self.solver
             .assert(self.matrix, &self.bindings, &self.clauses);
         self.offset = cls.vars;
-        let mut promises = cls.lits.into_iter().collect::<Vec<_>>();
+        let mut promises = cls.literals.into_iter().collect::<Vec<_>>();
         promises.shuffle(&mut self.rng);
         for id in promises {
             let lit = Off::new(id, 0);
@@ -83,7 +83,7 @@ impl<'matrix> Search<'matrix> {
         true
     }
 
-    fn prove(&mut self, goal: Off<Lit>) -> bool {
+    fn prove(&mut self, goal: Off<Literal>) -> bool {
         if self
             .solver
             .is_assigned_false(self.matrix, &self.bindings, goal)
@@ -92,7 +92,7 @@ impl<'matrix> Search<'matrix> {
         }
 
         let offset = goal.offset;
-        let Lit { pol, atom } = self.matrix.lits[goal.id];
+        let Literal { pol, atom } = self.matrix.literals[goal.id];
         let sym = self.matrix.terms[atom].as_sym();
         let atom = Off::new(atom, offset);
 
@@ -106,8 +106,9 @@ impl<'matrix> Search<'matrix> {
             {
                 return true;
             }
-            let ppol = self.matrix.lits[plit.id].pol;
-            let patom = Off::new(self.matrix.lits[plit.id].atom, plit.offset);
+            let ppol = self.matrix.literals[plit.id].pol;
+            let patom =
+                Off::new(self.matrix.literals[plit.id].atom, plit.offset);
             let psym = self.matrix.terms[patom.id].as_sym();
 
             if sym != psym {
@@ -115,7 +116,7 @@ impl<'matrix> Search<'matrix> {
             }
             if pol == ppol {
                 if self.bindings.equal(
-                    &self.matrix.syms,
+                    &self.matrix.symbols,
                     &self.matrix.terms,
                     atom,
                     patom,
@@ -124,7 +125,7 @@ impl<'matrix> Search<'matrix> {
                 }
             } else {
                 if self.bindings.unify(
-                    &self.matrix.syms,
+                    &self.matrix.symbols,
                     &self.matrix.terms,
                     atom,
                     patom,
@@ -164,10 +165,10 @@ impl<'matrix> Search<'matrix> {
             let cls = self.matrix.clauses[pos.cls];
             self.bindings.ensure_capacity(Var(self.offset + cls.vars));
             if self.bindings.unify(
-                &self.matrix.syms,
+                &self.matrix.symbols,
                 &self.matrix.terms,
                 atom,
-                Off::new(self.matrix.lits[pos.lit].atom, self.offset),
+                Off::new(self.matrix.literals[pos.lit].atom, self.offset),
             ) {
                 self.clauses.push(Off::new(pos.cls, self.offset));
                 self.offset += cls.vars;
@@ -180,7 +181,7 @@ impl<'matrix> Search<'matrix> {
                 self.solver
                     .assert(self.matrix, &self.bindings, &self.clauses);
                 let mut promises = cls
-                    .lits
+                    .literals
                     .into_iter()
                     .filter(|id| *id != pos.lit)
                     .collect::<Vec<_>>();
@@ -206,10 +207,10 @@ impl<'matrix> Search<'matrix> {
 
     fn check_constraints(&mut self) -> bool {
         for cls in &self.clauses {
-            let diseqs = self.matrix.clauses[cls.id].diseqs;
-            for diseq in &self.matrix.diseqs[diseqs] {
+            let diseqs = self.matrix.clauses[cls.id].disequations;
+            for diseq in &self.matrix.disequations[diseqs] {
                 if self.bindings.equal(
-                    &self.matrix.syms,
+                    &self.matrix.symbols,
                     &self.matrix.terms,
                     Off::new(diseq.left, cls.offset),
                     Off::new(diseq.right, cls.offset),

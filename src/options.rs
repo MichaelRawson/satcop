@@ -11,6 +11,9 @@ pub(crate) struct Options {
 
     #[clap(long, default_value = "10")]
     pub(crate) time: u64,
+
+    #[clap(long, default_value = "32")]
+    pub(crate) naming_threshold: u32,
 }
 
 impl Options {

@@ -1,5 +1,5 @@
 use crate::block::{Block, Id, Off, Range};
-use crate::syntax::{Sym, Trm, Var};
+use crate::syntax::{Symbol, Term, Var};
 use std::ops::Index;
 
 #[derive(Debug, Clone, Copy)]
@@ -7,7 +7,7 @@ pub(crate) struct Bound(Var);
 
 #[derive(Debug, Default)]
 pub(crate) struct Bindings {
-    bound: Block<Option<Off<Trm>>>,
+    bound: Block<Option<Off<Term>>>,
     trail: Block<Bound>,
 }
 
@@ -35,9 +35,9 @@ impl Bindings {
 
     pub(crate) fn resolve(
         &self,
-        terms: &Block<Trm>,
-        mut term: Off<Trm>,
-    ) -> Off<Trm> {
+        terms: &Block<Term>,
+        mut term: Off<Term>,
+    ) -> Off<Term> {
         while terms[term.id].is_var() {
             let x = terms[term.id].as_var().offset(term.offset);
             if let Some(bound) = self[x] {
@@ -51,10 +51,10 @@ impl Bindings {
 
     pub(crate) fn unify(
         &mut self,
-        syms: &Block<Sym>,
-        terms: &Block<Trm>,
-        mut left: Off<Trm>,
-        mut right: Off<Trm>,
+        syms: &Block<Symbol>,
+        terms: &Block<Term>,
+        mut left: Off<Term>,
+        mut right: Off<Term>,
     ) -> bool {
         let lsym = terms[left.id].as_sym();
         let rsym = terms[right.id].as_sym();
@@ -101,10 +101,10 @@ impl Bindings {
 
     pub(crate) fn equal(
         &mut self,
-        syms: &Block<Sym>,
-        terms: &Block<Trm>,
-        left: Off<Trm>,
-        right: Off<Trm>,
+        syms: &Block<Symbol>,
+        terms: &Block<Term>,
+        left: Off<Term>,
+        right: Off<Term>,
     ) -> bool {
         let mut left = self.resolve(terms, left);
         let mut right = self.resolve(terms, right);
@@ -138,10 +138,10 @@ impl Bindings {
 
     fn try_bind(
         &mut self,
-        syms: &Block<Sym>,
-        terms: &Block<Trm>,
+        syms: &Block<Symbol>,
+        terms: &Block<Term>,
         x: Var,
-        t: Off<Trm>,
+        t: Off<Term>,
     ) -> bool {
         if self.occurs(syms, terms, x, t) {
             return false;
@@ -150,17 +150,17 @@ impl Bindings {
         true
     }
 
-    fn bind(&mut self, x: Var, t: Off<Trm>) {
+    fn bind(&mut self, x: Var, t: Off<Term>) {
         self.trail.push(Bound(x));
         self.bound[Id::new(x.0)] = Some(t);
     }
 
     fn occurs(
         &self,
-        syms: &Block<Sym>,
-        terms: &Block<Trm>,
+        syms: &Block<Symbol>,
+        terms: &Block<Term>,
         x: Var,
-        mut t: Off<Trm>,
+        mut t: Off<Term>,
     ) -> bool {
         if terms[t.id].is_var() {
             let t = terms[t.id].as_var().offset(t.offset);
@@ -181,7 +181,7 @@ impl Bindings {
 }
 
 impl Index<Var> for Bindings {
-    type Output = Option<Off<Trm>>;
+    type Output = Option<Off<Term>>;
     fn index(&self, x: Var) -> &Self::Output {
         &self.bound[Id::new(x.0)]
     }
