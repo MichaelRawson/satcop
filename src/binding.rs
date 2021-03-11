@@ -18,7 +18,10 @@ impl Bindings {
     }
 
     pub(crate) fn ensure_capacity(&mut self, max: Var) {
-        self.bound.ensure_capacity(Id::new(max.0), Default::default);
+        let max = Id::new(max.0);
+        if self.bound.len() < max {
+            self.bound.resize_with(max, Default::default);
+        }
     }
 
     pub(crate) fn mark(&self) -> Id<Bound> {

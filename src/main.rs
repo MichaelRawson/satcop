@@ -1,6 +1,7 @@
 mod binding;
 mod block;
 mod builder;
+mod cdcl;
 mod digest;
 mod options;
 mod pp;

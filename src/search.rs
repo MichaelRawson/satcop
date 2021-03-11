@@ -50,14 +50,13 @@ impl<'matrix> Search<'matrix> {
         }
         loop {
             for start in self.matrix.start.range() {
-                if self.start(self.matrix.start[start]) {
+                self.start(self.matrix.start[start]);
+            }
+            if self.solver.seen_new_clause() {
+                if !self.solver.solve() {
                     return true;
                 }
-            }
-            if !self.solver.solve() {
-                return true;
-            }
-            if !self.solver.model_changed() {
+            } else {
                 self.depth_limit += 1;
             }
         }

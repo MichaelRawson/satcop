@@ -50,6 +50,11 @@ impl PP {
         }
     }
 
+    fn finalise_clause(&mut self, mut clause: CNF, info: Info) {
+        self.rename_clause(&mut clause);
+        self.builder.clause(clause, self.fresh_rename, info, true);
+    }
+
     fn name(
         &mut self,
         opts: &Options,
@@ -58,7 +63,7 @@ impl PP {
         name: bool,
         info: &Info,
     ) -> (u32, u32) {
-        let cap = |n| std::cmp::min(opts.naming_threshold + 1, n);
+        let cap = |n| std::cmp::min(opts.naming + 1, n);
         let (p, np) = match formula {
             FOF::Atom(FOFAtom::Bool(false)) => (1, 0),
             FOF::Atom(FOFAtom::Bool(true)) => (0, 1),
@@ -103,7 +108,7 @@ impl PP {
             Some(false) => np,
             None => p + np,
         };
-        if name && num > opts.naming_threshold {
+        if name && num > opts.naming {
             let (vars, definition) = self.definition(formula);
             let formula =
                 std::mem::replace(formula, FOF::Atom(definition.clone()));
@@ -252,11 +257,6 @@ impl PP {
             result.push(clause);
         }
         result
-    }
-
-    fn finalise_clause(&mut self, mut clause: CNF, info: Info) {
-        self.rename_clause(&mut clause);
-        self.builder.clause(clause, self.fresh_rename, info, true);
     }
 
     fn distribute(left: Vec<CNF>, right: Vec<CNF>) -> Vec<CNF> {

@@ -96,6 +96,11 @@ impl<T> Range<T> {
     pub(crate) fn is_empty(&self) -> bool {
         self.start == self.stop
     }
+
+    #[inline]
+    pub(crate) fn len(&self) -> u32 {
+        self.stop.index - self.start.index
+    }
 }
 
 impl<T> Clone for Range<T> {
@@ -170,14 +175,13 @@ impl<T> Block<T> {
         Id::new(len as u32)
     }
 
-    pub(crate) fn ensure_capacity<F>(&mut self, max: Id<T>, f: F)
+    #[inline]
+    pub(crate) fn resize_with<F>(&mut self, max: Id<T>, f: F)
     where
         F: FnMut() -> T,
     {
-        let index = max.index as usize + 1;
-        if self.0.len() <= index {
-            self.0.resize_with(index, f);
-        }
+        let index = max.index as usize;
+        self.0.resize_with(index, f);
     }
 
     #[inline]
@@ -261,6 +265,13 @@ impl<T> IndexMut<Range<T>> for Block<T> {
 pub(crate) struct BlockMap<K, V> {
     pub(crate) block: Block<V>,
     _phantom: PhantomData<K>,
+}
+
+impl<K, V> BlockMap<K, V> {
+    #[inline]
+    pub(crate) fn len(&self) -> Id<K> {
+        Id::new(self.block.len().index)
+    }
 }
 
 impl<K, V> Index<Id<K>> for BlockMap<K, V> {

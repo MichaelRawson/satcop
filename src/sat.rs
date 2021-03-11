@@ -1,45 +1,16 @@
 use crate::binding::Bindings;
 use crate::block::{Id, Off};
+use crate::cdcl;
 use crate::digest::{Digest, DigestMap, DigestSet};
-use crate::syntax::{Clause, Literal, Matrix, Symbol, Term};
-use std::os::raw::c_int;
+use crate::syntax::{Clause, Literal, Matrix, Term};
 
-const PICOSAT_UNSATISFIABLE: c_int = 20;
-
-#[repr(C)]
-struct PicoSAT {
-    _unused: [u8; 0],
-}
-
-#[link(name = "picosat")]
-extern "C" {
-    fn picosat_init() -> *mut PicoSAT;
-    fn picosat_add(sat: *mut PicoSAT, lit: c_int);
-    fn picosat_sat(sat: *mut PicoSAT, limit: c_int) -> c_int;
-    fn picosat_changed(sat: *mut PicoSAT) -> c_int;
-    fn picosat_deref_toplevel(sat: *mut PicoSAT, lit: c_int) -> c_int;
-}
-
+#[derive(Default)]
 pub(crate) struct Solver {
-    sat: *mut PicoSAT,
-    atoms: DigestMap<c_int>,
+    cdcl: cdcl::CDCL,
+    scratch: Vec<cdcl::Literal>,
+    atoms: DigestMap<Id<cdcl::Atom>>,
     cache: DigestSet,
-    fresh: c_int,
-}
-
-impl Default for Solver {
-    fn default() -> Self {
-        let sat = unsafe { picosat_init() };
-        let atoms = DigestMap::default();
-        let cache = DigestSet::default();
-        let fresh = 0;
-        Self {
-            sat,
-            atoms,
-            cache,
-            fresh,
-        }
-    }
+    new_clause: bool,
 }
 
 impl Solver {
@@ -49,47 +20,48 @@ impl Solver {
         bindings: &Bindings,
         clauses: &[Off<Clause>],
     ) {
-        let mut scratch = vec![];
         for clause in clauses {
             let mut digest = Digest::default();
-            for lit in matrix.clauses[clause.id].literals {
-                let lit = self.literal(
+            for literal in matrix.clauses[clause.id].literals {
+                let literal = self.literal(
                     matrix,
                     bindings,
-                    Off::new(lit, clause.offset),
-                    matrix.grounding_constant,
+                    Off::new(literal, clause.offset),
                 );
-                digest.update(lit as u32);
-                scratch.push(lit);
+                if !self.scratch.contains(&literal) {
+                    self.scratch.push(literal);
+                    let mut code = literal.atom.index as i32 + 1;
+                    if !literal.pol {
+                        code = -code;
+                    }
+                    let code = code as u32;
+                    digest.update(code);
+                }
             }
             if self.cache.insert(digest) {
-                for lit in scratch.drain(..) {
-                    unsafe { picosat_add(self.sat, lit) };
-                }
-                unsafe { picosat_add(self.sat, 0) };
-            } else {
-                scratch.clear();
-                continue;
+                self.cdcl.assert(&self.scratch);
+                self.new_clause = true;
             }
+            self.scratch.clear();
         }
     }
 
     pub(crate) fn solve(&mut self) -> bool {
-        unsafe { picosat_sat(self.sat, -1) != PICOSAT_UNSATISFIABLE }
+        self.cdcl.solve()
     }
 
-    pub(crate) fn model_changed(&mut self) -> bool {
-        unsafe { picosat_changed(self.sat) != 0 }
+    pub(crate) fn seen_new_clause(&mut self) -> bool {
+        std::mem::take(&mut self.new_clause)
     }
 
     pub(crate) fn is_assigned_false(
         &mut self,
         matrix: &Matrix,
         bindings: &Bindings,
-        lit: Off<Literal>,
+        literal: Off<Literal>,
     ) -> bool {
-        if let Some(lit) = self.ground_literal(matrix, bindings, lit) {
-            unsafe { picosat_deref_toplevel(self.sat, lit) == -1 }
+        if let Some(literal) = self.ground_literal(matrix, bindings, literal) {
+            self.cdcl.is_assigned_false(literal)
         } else {
             false
         }
@@ -100,21 +72,17 @@ impl Solver {
         matrix: &Matrix,
         bindings: &Bindings,
         lit: Off<Literal>,
-        ground: Id<Symbol>,
-    ) -> c_int {
+    ) -> cdcl::Literal {
         let Literal { pol, atom } = matrix.literals[lit.id];
         let atom = Off::new(atom, lit.offset);
         let mut digest = Digest::default();
-        self.term(&mut digest, matrix, bindings, atom, ground);
-        let fresh = &mut self.fresh;
-        let mut lit = *self.atoms.entry(digest).or_insert_with(|| {
-            *fresh += 1;
-            *fresh
-        });
-        if !pol {
-            lit = -lit;
-        }
-        lit
+        self.term(&mut digest, matrix, bindings, atom);
+        let cdcl = &mut self.cdcl;
+        let atom = *self
+            .atoms
+            .entry(digest)
+            .or_insert_with(|| cdcl.fresh_atom());
+        cdcl::Literal { pol, atom }
     }
 
     fn term(
@@ -123,7 +91,6 @@ impl Solver {
         matrix: &Matrix,
         bindings: &Bindings,
         term: Off<Term>,
-        ground: Id<Symbol>,
     ) {
         let sym = matrix.terms[term.id].as_sym();
         digest.update(sym.index);
@@ -135,9 +102,9 @@ impl Solver {
             let arg =
                 bindings.resolve(&matrix.terms, Off::new(arg, term.offset));
             if matrix.terms[arg.id].is_var() {
-                digest.update(ground.index);
+                digest.update(matrix.grounding_constant.index);
             } else {
-                self.term(digest, matrix, bindings, arg, ground);
+                self.term(digest, matrix, bindings, arg);
             };
         }
     }
@@ -146,19 +113,16 @@ impl Solver {
         &mut self,
         matrix: &Matrix,
         bindings: &Bindings,
-        lit: Off<Literal>,
-    ) -> Option<c_int> {
-        let Literal { pol, atom } = matrix.literals[lit.id];
+        literal: Off<Literal>,
+    ) -> Option<cdcl::Literal> {
+        let Literal { pol, atom } = matrix.literals[literal.id];
         let mut digest = Digest::default();
-        let atom = Off::new(atom, lit.offset);
+        let atom = Off::new(atom, literal.offset);
         if !self.ground_term(&mut digest, matrix, bindings, atom) {
             return None;
         }
-        let mut lit = *self.atoms.get(&digest)?;
-        if !pol {
-            lit = -lit;
-        }
-        Some(lit)
+        let atom = *self.atoms.get(&digest)?;
+        Some(cdcl::Literal { pol, atom })
     }
 
     fn ground_term(
