@@ -37,6 +37,7 @@ pub(crate) struct CDCL {
     next: Id<Atom>,
     empty_clause: bool,
     units: Vec<Id<Clause>>,
+    binary: BlockMap<Atom, [Block<Id<Clause>>; 2]>,
     watch: BlockMap<Atom, [Block<Id<Clause>>; 2]>,
 }
 
@@ -45,6 +46,7 @@ impl CDCL {
         let fresh = self.fresh;
         self.fresh.index += 1;
         self.assignment.block.push(None);
+        self.binary.block.push([Block::default(), Block::default()]);
         self.watch.block.push([Block::default(), Block::default()]);
         fresh
     }
@@ -71,7 +73,10 @@ impl CDCL {
             self.next = Id::new(0);
             for unit in &self.units {
                 let literal = self.clauses[*unit].literals.start;
-                self.propagating.push(Propagation { literal, reason: *unit });
+                self.propagating.push(Propagation {
+                    literal,
+                    reason: *unit,
+                });
             }
             loop {
                 let start = self.literals.len();
@@ -118,6 +123,16 @@ impl CDCL {
             self.empty_clause = true;
         } else if length == 1 {
             self.units.push(id);
+        } else if length == 2 {
+            let l1 = literals.start;
+            let mut l2 = literals.start;
+            l2.index += 1;
+            self.binary[self.literals[l1].atom]
+                [self.literals[l1].pol as usize]
+                .push(id);
+            self.binary[self.literals[l2].atom]
+                [self.literals[l2].pol as usize]
+                .push(id);
         } else {
             let w1 = literals.start;
             let mut w2 = literals.start;
@@ -220,6 +235,24 @@ impl CDCL {
 
     fn analyze_assignment(&mut self, atom: Id<Atom>, pol: bool) {
         let mut i = Id::new(0);
+        for i in self.binary[atom][!pol as usize].range() {
+            let id = self.binary[atom][!pol as usize][i];
+            let clause = self.clauses[id];
+            let l1 = clause.literals.start;
+            let mut l2 = clause.literals.start;
+            l2.index += 1;
+            let feasible = if self.literals[l1].atom == atom {
+                l2
+            } else {
+                l1
+            };
+            if self.assignment[self.literals[feasible].atom].is_none() {
+                self.propagating.push(Propagation {
+                    literal: feasible,
+                    reason: id,
+                });
+            }
+        }
         'watch: while i < self.watch[atom][!pol as usize].len() {
             let id = self.watch[atom][!pol as usize][i];
             let clause = self.clauses[id];
@@ -239,8 +272,7 @@ impl CDCL {
                         if i != self.watch[atom][!pol as usize].len() {
                             self.watch[atom][!pol as usize][i] = last;
                         }
-                    }
-                    else {
+                    } else {
                         unreachable!()
                     }
                     self.watch[new.atom][new.pol as usize].push(id);
