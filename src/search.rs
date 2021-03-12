@@ -151,8 +151,7 @@ impl<'matrix> Search<'matrix> {
         let save_clauses = self.clauses.len();
         let save_offset = self.offset;
         self.path.push(goal);
-        let mut alternatives =
-            self.matrix.index[sym].pol[!pol as usize].clone();
+        let mut alternatives = self.matrix.index[sym][!pol as usize].clone();
         alternatives.shuffle(&mut self.rng);
 
         /*

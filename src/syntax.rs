@@ -143,11 +143,6 @@ pub(crate) struct Position {
     pub(crate) lit: Id<Literal>,
 }
 
-#[derive(Debug)]
-pub(crate) struct Entry {
-    pub(crate) pol: [Vec<Position>; 2],
-}
-
 #[derive(Debug, Clone)]
 pub(crate) struct Info {
     pub(crate) is_goal: bool,
@@ -162,7 +157,7 @@ pub(crate) struct Matrix {
     pub(crate) clauses: Block<Clause>,
     pub(crate) info: BlockMap<Clause, Info>,
     pub(crate) start: Block<Id<Clause>>,
-    pub(crate) index: BlockMap<Symbol, Entry>,
+    pub(crate) index: BlockMap<Symbol, [Vec<Position>; 2]>,
     pub(crate) grounding_constant: Id<Symbol>,
 }
 

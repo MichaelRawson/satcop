@@ -58,9 +58,7 @@ impl Builder {
 
     pub(crate) fn new_symbol(&mut self, sym: Symbol) -> Id<Symbol> {
         let id = self.matrix.symbols.push(sym);
-        self.matrix.index.block.push(Entry {
-            pol: [vec![], vec![]],
-        });
+        self.matrix.index.block.push([vec![], vec![]]);
         id
     }
 
@@ -143,8 +141,7 @@ impl Builder {
             }
         }
         let lit = self.matrix.literals.push(Literal { pol, atom });
-        self.matrix.index[symbol].pol[pol as usize]
-            .push(Position { cls, lit });
+        self.matrix.index[symbol][pol as usize].push(Position { cls, lit });
         lit
     }
 
