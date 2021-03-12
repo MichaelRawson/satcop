@@ -79,6 +79,8 @@ impl<'matrix> Search<'matrix> {
                 return false;
             }
         }
+        self.bindings.clear();
+        self.clauses.clear();
         true
     }
 
