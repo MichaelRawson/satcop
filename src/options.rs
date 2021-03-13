@@ -24,6 +24,9 @@ pub(crate) struct Options {
         about = "threshold for naming subformulae"
     )]
     pub(crate) naming: u32,
+
+    #[clap(long, about = "apply constrained equality elimination")]
+    pub(crate) cee: bool,
 }
 
 impl Options {

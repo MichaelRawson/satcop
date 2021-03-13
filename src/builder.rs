@@ -1,5 +1,6 @@
 use crate::block::{Block, Id, Range};
 use crate::digest::{Digest, DigestMap};
+use crate::options::Options;
 use crate::syntax::*;
 use fnv::{FnvHashMap, FnvHashSet};
 use std::rc::Rc;
@@ -43,9 +44,9 @@ impl Default for Builder {
 }
 
 impl Builder {
-    pub(crate) fn finish(mut self) -> Matrix {
+    pub(crate) fn finish(mut self, options: &Options) -> Matrix {
         if self.has_equality {
-            self.add_equality_axioms();
+            self.add_equality_axioms(options);
         }
         self.matrix.grounding_constant = self
             .goal_constants
@@ -65,6 +66,7 @@ impl Builder {
     pub(crate) fn clause(
         &mut self,
         clause: CNF,
+        orderings: Vec<(Rc<FOFTerm>, Rc<FOFTerm>)>,
         vars: u32,
         info: Info,
         constraints: bool,
@@ -101,18 +103,34 @@ impl Builder {
         }
         let dstart = self.matrix.disequations.len();
         if constraints {
-            for diseq in disequations {
-                if self.possibly_equal(diseq.left, diseq.right) {
-                    self.matrix.disequations.push(diseq);
+            for diseq in &disequations {
+                if self.possibly_equal(diseq.left, diseq.right)
+                    && !self.subsumed(
+                        &disequations,
+                        diseq.left,
+                        diseq.right,
+                        true,
+                    )
+                {
+                    self.matrix.disequations.push(*diseq);
                 }
             }
         }
         let dstop = self.matrix.disequations.len();
         let disequations = Range::new(dstart, dstop);
+        let ostart = self.matrix.orderings.len();
+        for (left, right) in orderings {
+            let left = self.term(false, &left);
+            let right = self.term(false, &right);
+            self.matrix.orderings.push(Ordering { left, right });
+        }
+        let oend = self.matrix.orderings.len();
+        let orderings = Range::new(ostart, oend);
         self.matrix.clauses.push(Clause {
             vars,
             literals,
             disequations,
+            orderings,
         });
         self.matrix.info.block.push(info);
     }
@@ -205,6 +223,44 @@ impl Builder {
         true
     }
 
+    fn subsumed(
+        &self,
+        disequations: &FnvHashSet<Disequation>,
+        mut left: Id<Term>,
+        mut right: Id<Term>,
+        top: bool,
+    ) -> bool {
+        if !top
+            && (disequations.contains(&Disequation { left, right })
+                || disequations.contains(&Disequation {
+                    left: right,
+                    right: left,
+                }))
+        {
+            return true;
+        }
+        if self.matrix.terms[left].is_var()
+            || self.matrix.terms[right].is_var()
+        {
+            return false;
+        }
+        let sym = self.matrix.terms[left].as_sym();
+        let arity = self.matrix.symbols[sym].arity;
+        for _ in 0..arity {
+            left.index += 1;
+            right.index += 1;
+            if self.subsumed(
+                disequations,
+                self.matrix.terms[left].as_arg(),
+                self.matrix.terms[right].as_arg(),
+                false,
+            ) {
+                return true;
+            }
+        }
+        false
+    }
+
     fn occurs(&self, x: Var, mut t: Id<Term>) -> bool {
         if self.matrix.terms[t].is_var() {
             x == self.matrix.terms[t].as_var()
@@ -221,10 +277,9 @@ impl Builder {
         }
     }
 
-    fn add_equality_axioms(&mut self) {
+    fn add_equality_axioms(&mut self, options: &Options) {
         let v0 = Rc::new(FOFTerm::Var(Var(0)));
         let v1 = Rc::new(FOFTerm::Var(Var(1)));
-        let v2 = Rc::new(FOFTerm::Var(Var(2)));
         self.clause(
             CNF(vec![NNFLiteral {
                 pol: true,
@@ -233,10 +288,15 @@ impl Builder {
                     vec![v0.clone(), v0.clone()],
                 )),
             }]),
+            vec![],
             1,
             Info { is_goal: false },
             false,
         );
+        if options.cee {
+            return;
+        }
+        let v2 = Rc::new(FOFTerm::Var(Var(2)));
         self.clause(
             CNF(vec![
                 NNFLiteral {
@@ -254,6 +314,7 @@ impl Builder {
                     )),
                 },
             ]),
+            vec![],
             2,
             Info { is_goal: false },
             true,
@@ -279,10 +340,14 @@ impl Builder {
                     atom: Rc::new(FOFTerm::Fun(EQUALITY, vec![v0, v2])),
                 },
             ]),
+            vec![],
             3,
             Info { is_goal: false },
             true,
         );
+        if options.cee {
+            return;
+        }
         for id in self.matrix.symbols.range() {
             let sym = &self.matrix.symbols[id];
             if !sym.name.needs_congruence() {
@@ -330,7 +395,13 @@ impl Builder {
                 }
                 Sort::Unused => unreachable!(),
             }
-            self.clause(CNF(lits), arity * 2, Info { is_goal: false }, true);
+            self.clause(
+                CNF(lits),
+                vec![],
+                arity * 2,
+                Info { is_goal: false },
+                true,
+            );
         }
     }
 }

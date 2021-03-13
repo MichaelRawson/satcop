@@ -1,5 +1,6 @@
 use crate::binding::Bindings;
 use crate::block::{Block, Id, Off};
+use crate::lpo;
 use crate::sat;
 use crate::syntax::{Clause, Literal, Matrix, Term, Var};
 use rand::rngs::SmallRng;
@@ -215,6 +216,32 @@ impl<'matrix> Search<'matrix> {
                     Off::new(diseq.left, cls.offset),
                     Off::new(diseq.right, cls.offset),
                 ) {
+                    return false;
+                }
+            }
+            let orderings = self.matrix.clauses[cls.id].orderings;
+            for ordering in &self.matrix.orderings[orderings] {
+                use std::cmp::Ordering::Less;
+                let comparison = lpo::cmp(
+                    &self.matrix.symbols,
+                    &self.matrix.terms,
+                    &self.bindings,
+                    Off::new(ordering.left, cls.offset),
+                    Off::new(ordering.right, cls.offset),
+                );
+                /*
+                self.matrix.print_term(
+                    &self.bindings,
+                    Off::new(ordering.left, cls.offset),
+                );
+                print!("\t");
+                self.matrix.print_term(
+                    &self.bindings,
+                    Off::new(ordering.right, cls.offset),
+                );
+                println!("\t{:?}", comparison);
+                */
+                if matches!(comparison, Some(Less)) {
                     return false;
                 }
             }

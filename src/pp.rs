@@ -1,5 +1,6 @@
 use crate::block::Id;
 use crate::builder::Builder;
+use crate::cee;
 use crate::options::Options;
 use crate::syntax::*;
 use std::rc::Rc;
@@ -28,31 +29,61 @@ impl PP {
 
     pub(crate) fn process(
         &mut self,
-        options: &Options,
+        opts: &Options,
         mut formula: FOF,
         info: Info,
         max_var: u32,
     ) {
         self.subst.clear();
         self.subst.resize(max_var as usize, None);
-        self.name(options, Some(true), &mut formula, false, &info);
-        self.after_naming(formula, &info);
+        self.name(opts, Some(true), &mut formula, false, &info);
+        self.after_naming(opts, formula, &info);
     }
 
-    pub(crate) fn finish(self) -> Matrix {
-        self.builder.finish()
+    pub(crate) fn finish(self, opts: &Options) -> Matrix {
+        self.builder.finish(opts)
     }
 
-    fn after_naming(&mut self, formula: FOF, info: &Info) {
+    fn after_naming(&mut self, opts: &Options, formula: FOF, info: &Info) {
         let nnf = self.nnf(true, &formula);
-        for clause in self.cnf(nnf, &info) {
-            self.finalise_clause(clause, info.clone());
+        for mut clause in self.cnf(nnf, &info) {
+            if opts.cee {
+                self.cee(clause, info);
+            } else {
+                self.rename_clause(self.subst.len() as u32, &mut clause);
+                self.builder.clause(
+                    clause,
+                    vec![],
+                    self.fresh_rename,
+                    info.clone(),
+                    true,
+                );
+            }
         }
     }
 
-    fn finalise_clause(&mut self, mut clause: CNF, info: Info) {
-        self.rename_clause(&mut clause);
-        self.builder.clause(clause, self.fresh_rename, info, true);
+    fn cee(&mut self, mut clause: CNF, info: &Info) {
+        let mut fresh = self.subst.len() as u32;
+        cee::monotonicity(&mut fresh, &mut clause);
+        cee::reflexivity(&mut clause);
+        for mut clause in cee::symmetry(&clause) {
+            let mut fresh2 = fresh;
+            let orderings = cee::transitivity(&mut fresh2, &mut clause);
+            self.rename_clause(fresh2, &mut clause);
+            let orderings = orderings
+                .into_iter()
+                .map(|(left, right)| {
+                    (self.rename_term(&left), self.rename_term(&right))
+                })
+                .collect();
+            self.builder.clause(
+                clause,
+                orderings,
+                self.fresh_rename,
+                info.clone(),
+                true,
+            );
+        }
     }
 
     fn name(
@@ -112,7 +143,7 @@ impl PP {
             let (vars, definition) = self.definition(formula);
             let formula =
                 std::mem::replace(formula, FOF::Atom(definition.clone()));
-            self.define(pol, vars, definition, formula, info);
+            self.define(opts, pol, vars, definition, formula, info);
             (1, 1)
         } else {
             (p, np)
@@ -144,6 +175,7 @@ impl PP {
 
     fn define(
         &mut self,
+        opts: &Options,
         pol: Option<bool>,
         mut vars: Vec<Var>,
         definition: FOFAtom,
@@ -161,7 +193,7 @@ impl PP {
         }
         let mut info = info.clone();
         info.is_goal = false;
-        self.after_naming(formula, &info);
+        self.after_naming(opts, formula, &info);
     }
 
     fn nnf(&mut self, pol: bool, formula: &FOF) -> NNF {
@@ -272,10 +304,10 @@ impl PP {
         result
     }
 
-    fn rename_clause(&mut self, clause: &mut CNF) {
+    fn rename_clause(&mut self, num_vars: u32, clause: &mut CNF) {
         self.fresh_rename = 0;
         self.rename.clear();
-        self.rename.resize(self.subst.len(), u32::MAX);
+        self.rename.resize(num_vars as usize, u32::MAX);
         for literal in &mut clause.0 {
             literal.atom = self.rename_term(&literal.atom);
         }

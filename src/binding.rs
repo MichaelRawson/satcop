@@ -137,26 +137,7 @@ impl Bindings {
         true
     }
 
-    fn try_bind(
-        &mut self,
-        syms: &Block<Symbol>,
-        terms: &Block<Term>,
-        x: Var,
-        t: Off<Term>,
-    ) -> bool {
-        if self.occurs(syms, terms, x, t) {
-            return false;
-        }
-        self.bind(x, t);
-        true
-    }
-
-    fn bind(&mut self, x: Var, t: Off<Term>) {
-        self.trail.push(Bound(x));
-        self.bound[Id::new(x.0)] = Some(t);
-    }
-
-    fn occurs(
+    pub(crate) fn occurs(
         &self,
         syms: &Block<Symbol>,
         terms: &Block<Term>,
@@ -178,6 +159,25 @@ impl Bindings {
             }
             false
         }
+    }
+
+    fn try_bind(
+        &mut self,
+        syms: &Block<Symbol>,
+        terms: &Block<Term>,
+        x: Var,
+        t: Off<Term>,
+    ) -> bool {
+        if self.occurs(syms, terms, x, t) {
+            return false;
+        }
+        self.bind(x, t);
+        true
+    }
+
+    fn bind(&mut self, x: Var, t: Off<Term>) {
+        self.trail.push(Bound(x));
+        self.bound[Id::new(x.0)] = Some(t);
     }
 }
 

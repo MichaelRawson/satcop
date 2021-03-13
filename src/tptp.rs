@@ -92,8 +92,8 @@ struct Loader {
 }
 
 impl Loader {
-    pub(crate) fn finish(self) -> syntax::Matrix {
-        self.pp.finish()
+    pub(crate) fn finish(self, options: &Options) -> syntax::Matrix {
+        self.pp.finish(options)
     }
 
     fn defined_term(
@@ -540,5 +540,5 @@ pub(crate) fn load(options: &Options) -> anyhow::Result<syntax::Matrix> {
         .with_context(|| {
             format!("failed to load from '{}'", options.path.display())
         })?;
-    Ok(loader.finish())
+    Ok(loader.finish(options))
 }

@@ -55,7 +55,7 @@ impl fmt::Debug for Symbol {
     }
 }
 
-#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct Var(pub(crate) u32);
 
 impl Var {
@@ -130,11 +130,18 @@ pub(crate) struct Disequation {
     pub(crate) right: Id<Term>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct Ordering {
+    pub(crate) left: Id<Term>,
+    pub(crate) right: Id<Term>,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Clause {
     pub(crate) vars: u32,
     pub(crate) literals: Range<Literal>,
     pub(crate) disequations: Range<Disequation>,
+    pub(crate) orderings: Range<Ordering>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -154,6 +161,7 @@ pub(crate) struct Matrix {
     pub(crate) terms: Block<Term>,
     pub(crate) literals: Block<Literal>,
     pub(crate) disequations: Block<Disequation>,
+    pub(crate) orderings: Block<Ordering>,
     pub(crate) clauses: Block<Clause>,
     pub(crate) info: BlockMap<Clause, Info>,
     pub(crate) start: Block<Id<Clause>>,
@@ -183,18 +191,26 @@ impl Matrix {
                     self.print_literal(&bindings, Off::new(id, 0));
                 }
             }
-            println!(").");
-            if clause.disequations.is_empty() {
-                continue;
-            }
-            print!("% ");
+            print!("). % ");
+            let mut sep = false;
             for id in clause.disequations {
-                if id > clause.disequations.start {
+                if sep {
                     print!(", ");
                 }
+                sep = true;
                 let Disequation { left, right } = self.disequations[id];
                 self.print_term(&bindings, Off::new(left, 0));
                 print!(" != ");
+                self.print_term(&bindings, Off::new(right, 0));
+            }
+            for id in clause.orderings {
+                if sep {
+                    print!(", ");
+                }
+                sep = true;
+                let Ordering { left, right } = self.orderings[id];
+                self.print_term(&bindings, Off::new(left, 0));
+                print!(" >= ");
                 self.print_term(&bindings, Off::new(right, 0));
             }
             println!();
@@ -215,7 +231,7 @@ impl Matrix {
         );
     }
 
-    fn print_term(&self, bindings: &Bindings, term: Off<Term>) {
+    pub(crate) fn print_term(&self, bindings: &Bindings, term: Off<Term>) {
         let mut term = bindings.resolve(&self.terms, term);
         if self.terms[term.id].is_var() {
             print!("X{}", self.terms[term.id].as_var().offset(term.offset).0);
@@ -240,20 +256,10 @@ impl Matrix {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum FOFTerm {
     Var(Var),
     Fun(Id<Symbol>, Vec<Rc<FOFTerm>>),
-}
-
-impl fmt::Debug for FOFTerm {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Self::Var(x) => x.fmt(f),
-            Self::Fun(g, args) if args.is_empty() => write!(f, "{:?}", g),
-            Self::Fun(g, args) => write!(f, "{:?}{:?}", g, args),
-        }
-    }
 }
 
 impl FOFTerm {
@@ -267,6 +273,16 @@ impl FOFTerm {
                     t.vars(vars);
                 }
             }
+        }
+    }
+}
+
+impl fmt::Debug for FOFTerm {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::Var(x) => x.fmt(f),
+            Self::Fun(g, args) if args.is_empty() => write!(f, "{:?}", g),
+            Self::Fun(g, args) => write!(f, "{:?}{:?}", g, args),
         }
     }
 }
