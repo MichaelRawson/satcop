@@ -10,11 +10,11 @@ struct Record(u32);
 
 impl Record {
     fn arg(id: Id<Self>) -> Self {
-        Self(id.index)
+        Self(id.as_u32())
     }
 
     fn sym(id: Id<Symbol>) -> Self {
-        Self(id.index)
+        Self(id.as_u32())
     }
 
     fn var() -> Self {
@@ -64,7 +64,7 @@ impl Solver {
                 );
                 if !self.scratch.contains(&literal) {
                     self.scratch.push(literal);
-                    let mut code = literal.atom.index as i32 + 1;
+                    let mut code = literal.atom.as_u32() as i32 + 1;
                     if !literal.pol {
                         code = -code;
                     }
@@ -74,8 +74,7 @@ impl Solver {
             }
             if self.cache.insert(digest) {
                 let new = self.cdcl.assert(&self.scratch);
-                let len = Id::new(new.index + 1);
-                self.origins.block.resize_with(len, Id::default);
+                self.origins.resize_with(new.offset(1), Id::default);
                 self.origins[new] = clause.id;
                 self.new_clause = true;
             }
@@ -111,7 +110,7 @@ impl Solver {
     ) -> anyhow::Result<()> {
         for (gi, record) in self.cdcl.core().into_iter().enumerate() {
             let origin = self.origins[record];
-            write!(w, "fof(g{}, plain, ", gi)?;
+            write!(w, "cnf(g{}, plain, ", gi)?;
             let record = self.cdcl.clauses[record];
             if record.literals.is_empty() {
                 write!(w, "$false")?;
@@ -130,13 +129,13 @@ impl Solver {
                     print_sep = true;
                 }
             }
-            write!(w, ", inference(record, [], [")?;
+            write!(w, ", inference(ground_cnf, [], [")?;
             match &matrix.info[origin].source {
                 Source::Equality => {
                     write!(w, "theory(equality)")?;
                 }
                 Source::Axiom { path, name } => {
-                    write!(w, "file('{}', {})", path, name)?;
+                    write!(w, "file({}, {})", path, name)?;
                 }
             }
             writeln!(w, "])).")?;
@@ -158,7 +157,7 @@ impl Solver {
         }
         write!(w, "(")?;
         for i in 0..arity {
-            record.index += 1;
+            record.increment();
             if i > 0 {
                 write!(w, ",")?;
             }
@@ -195,7 +194,7 @@ impl Solver {
         });
         if new {
             let record = self.record(matrix, bindings, atom);
-            self.atom_record.block.push(record);
+            self.atom_record.push(record);
         }
         cdcl::Literal { pol, atom: sat }
     }
@@ -208,16 +207,16 @@ impl Solver {
         term: Off<Term>,
     ) {
         let sym = matrix.terms[term.id].as_sym();
-        digest.update(sym.index);
+        digest.update(sym.as_u32());
         let arity = matrix.symbols[sym].arity;
         let mut argit = term.id;
         for _ in 0..arity {
-            argit.index += 1;
+            argit.increment();
             let arg = matrix.terms[argit].as_arg();
             let arg =
                 bindings.resolve(&matrix.terms, Off::new(arg, term.offset));
             if matrix.terms[arg.id].is_var() {
-                digest.update(matrix.grounding_constant.index);
+                digest.update(matrix.grounding_constant.as_u32());
             } else {
                 self.term(digest, matrix, bindings, arg);
             };
@@ -248,10 +247,10 @@ impl Solver {
         mut term: Off<Term>,
     ) -> bool {
         let sym = matrix.terms[term.id].as_sym();
-        digest.update(sym.index);
+        digest.update(sym.as_u32());
         let arity = matrix.symbols[sym].arity;
         for _ in 0..arity {
-            term.id.index += 1;
+            term.id.increment();
             let arg = matrix.terms[term.id].as_arg();
             let arg =
                 bindings.resolve(&matrix.terms, Off::new(arg, term.offset));
@@ -273,12 +272,12 @@ impl Solver {
         let sym = matrix.terms[term.id].as_sym();
         let mut recorded = vec![Record::sym(sym)];
         let mut digest = Digest::default();
-        digest.update(sym.index);
+        digest.update(sym.as_u32());
 
         let arity = matrix.symbols[sym].arity;
         let mut argit = term.id;
         for _ in 0..arity {
-            argit.index += 1;
+            argit.increment();
             let arg = matrix.terms[argit].as_arg();
             let arg =
                 bindings.resolve(&matrix.terms, Off::new(arg, term.offset));

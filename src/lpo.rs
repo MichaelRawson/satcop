@@ -11,9 +11,7 @@ fn flip(ordering: Option<Ordering>) -> Option<Ordering> {
 fn sym(syms: &Block<Symbol>, left: Id<Symbol>, right: Id<Symbol>) -> Ordering {
     let left_arity = syms[left].arity;
     let right_arity = syms[right].arity;
-    left_arity
-        .cmp(&right_arity)
-        .then(left.index.cmp(&right.index))
+    left_arity.cmp(&right_arity).then(left.cmp(&right))
 }
 
 fn alpha(
@@ -37,7 +35,7 @@ fn alpha(
             }
             _ => {}
         }
-        ss.id.index += 1;
+        ss.id.increment();
     }
     None
 }
@@ -58,7 +56,7 @@ fn ma(
             s,
             Off::new(terms[tt.id].as_arg(), tt.offset),
         );
-        tt.id.index += 1;
+        tt.id.increment();
         match comparison {
             Some(Greater) => {}
             Some(_) => return Some(Less),
@@ -77,14 +75,10 @@ fn lma(
     t: Off<Term>,
 ) -> Option<Ordering> {
     let arity = syms[sym].arity;
-    let mut ss = s.id;
-    ss.index += 1;
-    let mut tt = t.id;
-    tt.index += 1;
-    let mut s_stop = s.id;
-    s_stop.index += arity + 1;
-    let mut t_stop = t.id;
-    t_stop.index += arity + 1;
+    let mut ss = s.id.offset(1);
+    let mut tt = t.id.offset(1);
+    let s_stop = s.id.offset(arity + 1);
+    let t_stop = t.id.offset(arity + 1);
     while ss != s_stop {
         match cmp(
             syms,
@@ -104,8 +98,8 @@ fn lma(
                 ));
             }
             Some(Equal) => {
-                ss.index += 1;
-                tt.index += 1;
+                ss.increment();
+                tt.increment();
             }
             Some(Greater) => {
                 return ma(
@@ -190,14 +184,10 @@ pub(crate) fn cmp(
             let f_arity = syms[f].arity;
             let g = terms[t.id].as_sym();
             let g_arity = syms[g].arity;
-            let mut ss = s;
-            ss.id.index += 1;
-            let mut s_stop = s.id;
-            s_stop.index += f_arity + 1;
-            let mut tt = t;
-            tt.id.index += 1;
-            let mut t_stop = t.id;
-            t_stop.index += g_arity + 1;
+            let ss = Off::new(s.id.offset(1), s.offset);
+            let s_stop = s.id.offset(f_arity + 1);
+            let tt = Off::new(t.id.offset(1), t.offset);
+            let t_stop = t.id.offset(g_arity + 1);
             match sym(syms, f, g) {
                 Less => flip(ma(syms, terms, bindings, t, ss, s_stop)),
                 Equal => lma(syms, terms, bindings, f, s, t),

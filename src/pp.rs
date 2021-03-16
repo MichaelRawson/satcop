@@ -1,25 +1,19 @@
-use crate::block::Id;
+use crate::block::{BlockMap, Id};
 use crate::builder::Builder;
 use crate::cee;
 use crate::options::Options;
 use crate::syntax::*;
 use std::rc::Rc;
 
-#[derive(Debug)]
-struct Definition {
-    clauses: Vec<CNF>,
-    atom: Rc<Term>,
-}
-
 #[derive(Default)]
 pub(crate) struct PP {
     builder: Builder,
     bound: Vec<Rc<FOFTerm>>,
-    subst: Vec<Option<Rc<FOFTerm>>>,
-    fresh_skolem: u32,
-    rename: Vec<u32>,
-    fresh_rename: u32,
-    fresh_definition: u32,
+    subst: BlockMap<Var, Option<Rc<FOFTerm>>>,
+    fresh_skolem: Id<Skolem>,
+    fresh_definition: Id<Definition>,
+    rename: BlockMap<Var, Option<Id<Var>>>,
+    fresh_rename: Id<Var>,
 }
 
 impl PP {
@@ -33,10 +27,10 @@ impl PP {
         mut formula: FOF,
         is_goal: bool,
         source: Source,
-        max_var: u32,
+        max_var: Id<Var>,
     ) {
         self.subst.clear();
-        self.subst.resize(max_var as usize, None);
+        self.subst.resize_with(max_var, Option::default);
         self.name(opts, Some(true), &mut formula, &source, false);
         self.after_naming(opts, formula, is_goal, &source);
     }
@@ -57,7 +51,7 @@ impl PP {
             if opts.cee {
                 self.cee(clause, is_goal, &source);
             } else {
-                self.rename_clause(self.subst.len() as u32, &mut clause);
+                self.rename_clause(self.subst.len(), &mut clause);
                 self.builder.clause(
                     clause,
                     vec![],
@@ -73,7 +67,7 @@ impl PP {
     }
 
     fn cee(&mut self, mut clause: CNF, is_goal: bool, source: &Source) {
-        let mut fresh = self.subst.len() as u32;
+        let mut fresh = self.subst.len();
         cee::monotonicity(&mut fresh, &mut clause);
         cee::reflexivity(&mut clause);
         for mut clause in cee::symmetry(&clause) {
@@ -163,15 +157,14 @@ impl PP {
         }
     }
 
-    fn definition(&mut self, formula: &FOF) -> (Vec<Var>, FOFAtom) {
-        let mut vars = vec![];
-        vars.resize(self.subst.len(), false);
+    fn definition(&mut self, formula: &FOF) -> (Vec<Id<Var>>, FOFAtom) {
+        let mut vars = BlockMap::default();
+        vars.resize_with(self.subst.len(), Default::default);
         formula.vars(&mut vars);
         let vars = vars
+            .range()
             .into_iter()
-            .enumerate()
-            .filter(|(_, present)| *present)
-            .map(|(i, _)| Var(i as u32))
+            .filter(|id| vars[*id])
             .collect::<Vec<_>>();
         let arity = vars.len() as u32;
         let args = vars
@@ -181,7 +174,7 @@ impl PP {
             .collect::<Vec<_>>();
         let sort = Sort::Bool;
         let name = Name::Definition(self.fresh_definition);
-        self.fresh_definition += 1;
+        self.fresh_definition.increment();
         let sym = self.new_symbol(Symbol { arity, sort, name });
         (vars, FOFAtom::Pred(Rc::new(FOFTerm::Fun(sym, args))))
     }
@@ -190,7 +183,7 @@ impl PP {
         &mut self,
         opts: &Options,
         pol: Option<bool>,
-        mut vars: Vec<Var>,
+        mut vars: Vec<Id<Var>>,
         definition: FOFAtom,
         source: &Source,
         formula: FOF,
@@ -268,10 +261,10 @@ impl PP {
                 let arity = self.bound.len() as u32;
                 let sort = Sort::Obj;
                 let name = Name::Skolem(self.fresh_skolem);
-                self.fresh_skolem += 1;
+                self.fresh_skolem.increment();
                 let sym = self.new_symbol(Symbol { arity, sort, name });
                 let skolem = Rc::new(FOFTerm::Fun(sym, self.bound.clone()));
-                self.subst[x.0 as usize] = Some(skolem);
+                self.subst[x] = Some(skolem);
                 self.cnf(*f)
             }
         };
@@ -314,10 +307,10 @@ impl PP {
         result
     }
 
-    fn rename_clause(&mut self, num_vars: u32, clause: &mut CNF) {
-        self.fresh_rename = 0;
+    fn rename_clause(&mut self, num_vars: Id<Var>, clause: &mut CNF) {
+        self.fresh_rename = Id::new(0);
         self.rename.clear();
-        self.rename.resize(num_vars as usize, u32::MAX);
+        self.rename.resize_with(num_vars, Option::default);
         for literal in &mut clause.0 {
             literal.atom = self.rename_term(&literal.atom);
         }
@@ -326,14 +319,15 @@ impl PP {
     fn rename_term(&mut self, term: &Rc<FOFTerm>) -> Rc<FOFTerm> {
         Rc::new(match &**term {
             FOFTerm::Var(x) => {
-                let index = x.0 as usize;
-                let mut renamed = self.rename[index];
-                if renamed == u32::MAX {
-                    renamed = self.fresh_rename;
-                    self.rename[index] = renamed;
-                    self.fresh_rename += 1;
-                }
-                FOFTerm::Var(Var(renamed))
+                let renamed = if let Some(renamed) = self.rename[*x] {
+                    renamed
+                } else {
+                    let renamed = self.fresh_rename;
+                    self.rename[*x] = Some(renamed);
+                    self.fresh_rename.increment();
+                    renamed
+                };
+                FOFTerm::Var(renamed)
             }
             FOFTerm::Fun(f, ts) => FOFTerm::Fun(
                 *f,
@@ -344,9 +338,9 @@ impl PP {
 
     fn substitute(&mut self, term: &Rc<FOFTerm>) -> Rc<FOFTerm> {
         match &**term {
-            FOFTerm::Var(x) => self.subst[x.0 as usize]
-                .clone()
-                .unwrap_or_else(|| term.clone()),
+            FOFTerm::Var(x) => {
+                self.subst[*x].clone().unwrap_or_else(|| term.clone())
+            }
             FOFTerm::Fun(f, ts) => Rc::new(FOFTerm::Fun(
                 *f,
                 ts.iter().map(|t| self.substitute(t)).collect(),

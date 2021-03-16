@@ -82,9 +82,9 @@ struct SymbolEntry<'a> {
 #[derive(Default)]
 struct Loader {
     pp: PP,
-    fresh: u32,
-    free: Vec<(String, syntax::Var)>,
-    bound: Vec<(String, syntax::Var)>,
+    fresh: Id<syntax::Var>,
+    free: Vec<(String, Id<syntax::Var>)>,
+    bound: Vec<(String, Id<syntax::Var>)>,
     lower: FnvHashMap<SymbolEntry<'static>, Id<syntax::Symbol>>,
     quoted: FnvHashMap<SymbolEntry<'static>, Id<syntax::Symbol>>,
     number: FnvHashMap<String, Id<syntax::Symbol>>,
@@ -218,8 +218,8 @@ impl Loader {
                 {
                     *var
                 } else {
-                    let var = syntax::Var(self.fresh);
-                    self.fresh += 1;
+                    let var = self.fresh;
+                    self.fresh.increment();
                     self.free.push((name.to_string(), var));
                     var
                 };
@@ -363,8 +363,8 @@ impl Loader {
         let num_bound = fof.bound.0.len();
         for x in fof.bound.0.into_iter() {
             let string = x.0 .0.to_string();
-            let var = syntax::Var(self.fresh);
-            self.fresh += 1;
+            let var = self.fresh;
+            self.fresh.increment();
             self.bound.push((string, var));
         }
         let mut f = self.fof_unit_formula(*fof.formula)?;
@@ -470,7 +470,7 @@ impl Loader {
             name: format!("{}", &annotated.name),
         };
 
-        self.fresh = 0;
+        self.fresh = Id::new(0);
         self.free.clear();
         let mut formula = annotated.formula.load(self)?;
         if negate {

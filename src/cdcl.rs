@@ -50,10 +50,10 @@ pub(crate) struct CDCL {
 impl CDCL {
     pub(crate) fn fresh_atom(&mut self) -> Id<Atom> {
         let fresh = self.fresh;
-        self.fresh.index += 1;
-        self.assignment.block.push(None);
-        self.binary.block.push([Block::default(), Block::default()]);
-        self.watch.block.push([Block::default(), Block::default()]);
+        self.fresh.increment();
+        self.assignment.push(None);
+        self.binary.push([Block::default(), Block::default()]);
+        self.watch.push([Block::default(), Block::default()]);
         fresh
     }
 
@@ -74,8 +74,8 @@ impl CDCL {
                 return false;
             }
             self.trail.clear();
-            for id in self.assignment.block.range() {
-                self.assignment.block[id] = None;
+            for id in self.assignment.range() {
+                self.assignment[id] = None;
             }
             self.next = Id::new(0);
             for unit in &self.units {
@@ -150,8 +150,7 @@ impl CDCL {
             self.units.push(id);
         } else if length == 2 {
             let l1 = clause.literals.start;
-            let mut l2 = clause.literals.start;
-            l2.index += 1;
+            let l2 = l1.offset(1);
             self.binary[self.literals[l1].atom]
                 [self.literals[l1].pol as usize]
                 .push(id);
@@ -160,8 +159,7 @@ impl CDCL {
                 .push(id);
         } else {
             let w1 = clause.literals.start;
-            let mut w2 = clause.literals.start;
-            w2.index += 1;
+            let w2 = w1.offset(1);
             let watch = [w1, w2];
             for watched in &watch {
                 let Literal { atom, pol } = self.literals[*watched];
@@ -249,7 +247,7 @@ impl CDCL {
     fn tiebreak(&mut self) -> bool {
         while self.next < self.assignment.len() {
             let atom = self.next;
-            self.next.index += 1;
+            self.next.increment();
             if self.assignment[atom].is_some() {
                 continue;
             }
@@ -273,8 +271,7 @@ impl CDCL {
             let id = self.binary[atom][!pol as usize][i];
             let clause = self.clauses[id];
             let l1 = clause.literals.start;
-            let mut l2 = clause.literals.start;
-            l2.index += 1;
+            let l2 = l1.offset(1);
             let feasible = if self.literals[l1].atom == atom {
                 l2
             } else {
@@ -291,8 +288,7 @@ impl CDCL {
             let id = self.watch[atom][!pol as usize][i];
             let clause = self.clauses[id];
             let w1 = clause.literals.start;
-            let mut w2 = clause.literals.start;
-            w2.index += 1;
+            let w2 = w1.offset(1);
             let (assigned, feasible) = if self.literals[w1].atom == atom {
                 (w1, w2)
             } else {
@@ -321,7 +317,7 @@ impl CDCL {
                     reason: id,
                 });
             }
-            i.index += 1;
+            i.increment();
         }
     }
 

@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 use std::ops::{Index, IndexMut};
 
 pub(crate) struct Id<T> {
-    pub(crate) index: u32,
+    index: u32,
     _phantom: PhantomData<T>,
 }
 
@@ -13,6 +13,21 @@ impl<T> Id<T> {
     pub(crate) const fn new(index: u32) -> Self {
         let _phantom = PhantomData;
         Self { index, _phantom }
+    }
+
+    #[inline]
+    pub(crate) fn as_u32(self) -> u32 {
+        self.index
+    }
+
+    #[inline]
+    pub(crate) fn offset(self, offset: u32) -> Self {
+        Self::new(self.index + offset)
+    }
+
+    #[inline]
+    pub(crate) fn increment(&mut self) {
+        self.index += 1;
     }
 }
 
@@ -263,7 +278,7 @@ impl<T> IndexMut<Range<T>> for Block<T> {
 
 #[derive(Debug)]
 pub(crate) struct BlockMap<K, V> {
-    pub(crate) block: Block<V>,
+    block: Block<V>,
     _phantom: PhantomData<K>,
 }
 
@@ -271,6 +286,30 @@ impl<K, V> BlockMap<K, V> {
     #[inline]
     pub(crate) fn len(&self) -> Id<K> {
         Id::new(self.block.len().index)
+    }
+
+    #[inline]
+    pub(crate) fn range(&self) -> Range<K> {
+        Range::new(Id::new(0), self.len())
+    }
+
+    #[inline]
+    pub(crate) fn push(&mut self, v: V) -> Id<K> {
+        Id::new(self.block.push(v).index)
+    }
+
+    #[inline]
+    pub(crate) fn clear(&mut self) {
+        self.block.clear();
+    }
+
+    #[inline]
+    pub(crate) fn resize_with<F>(&mut self, max: Id<K>, f: F)
+    where
+        F: FnMut() -> V,
+    {
+        let len = Id::new(max.index);
+        self.block.resize_with(len, f);
     }
 }
 

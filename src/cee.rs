@@ -1,8 +1,9 @@
+use crate::block::Id;
 use crate::syntax::*;
 use fnv::FnvHashMap;
 use std::rc::Rc;
 
-pub(crate) fn monotonicity(fresh: &mut u32, clause: &mut CNF) {
+pub(crate) fn monotonicity(fresh: &mut Id<Var>, clause: &mut CNF) {
     let mut defs = FnvHashMap::default();
     for index in 0..clause.0.len() {
         let NNFLiteral { pol, atom } = clause.0[index].clone();
@@ -23,7 +24,7 @@ pub(crate) fn monotonicity(fresh: &mut u32, clause: &mut CNF) {
 }
 
 fn flatten_args(
-    fresh: &mut u32,
+    fresh: &mut Id<Var>,
     defs: &mut FnvHashMap<Rc<FOFTerm>, Rc<FOFTerm>>,
     clause: &mut CNF,
     term: &Rc<FOFTerm>,
@@ -62,7 +63,7 @@ pub(crate) fn symmetry(clause: &CNF) -> Vec<CNF> {
 }
 
 pub(crate) fn transitivity(
-    fresh: &mut u32,
+    fresh: &mut Id<Var>,
     clause: &mut CNF,
 ) -> Vec<(Rc<FOFTerm>, Rc<FOFTerm>)> {
     let mut orderings = vec![];
@@ -82,8 +83,8 @@ pub(crate) fn transitivity(
             orderings.push((left.clone(), right.clone()));
             continue;
         }
-        let link = Rc::new(FOFTerm::Var(Var(*fresh)));
-        *fresh += 1;
+        let link = Rc::new(FOFTerm::Var(*fresh));
+        fresh.increment();
         orderings.push((left.clone(), link.clone()));
         orderings.push((right.clone(), link.clone()));
         clause.0[index].atom =
@@ -97,7 +98,7 @@ pub(crate) fn transitivity(
 }
 
 fn flatten(
-    fresh: &mut u32,
+    fresh: &mut Id<Var>,
     defs: &mut FnvHashMap<Rc<FOFTerm>, Rc<FOFTerm>>,
     clause: &mut CNF,
     term: &Rc<FOFTerm>,
@@ -114,8 +115,8 @@ fn flatten(
     let term = Rc::new(FOFTerm::Fun(*f, args));
     defs.entry(term.clone())
         .or_insert_with(|| {
-            let var = Rc::new(FOFTerm::Var(Var(*fresh)));
-            *fresh += 1;
+            let var = Rc::new(FOFTerm::Var(*fresh));
+            fresh.increment();
             let equation =
                 Rc::new(FOFTerm::Fun(EQUALITY, vec![var.clone(), term]));
             clause.0.push(NNFLiteral {
@@ -129,7 +130,7 @@ fn flatten(
 
 fn as_variable_disequation(
     literal: &NNFLiteral,
-) -> Option<(Var, Rc<FOFTerm>)> {
+) -> Option<(Id<Var>, Rc<FOFTerm>)> {
     if literal.pol {
         return None;
     }
@@ -159,7 +160,7 @@ fn as_variable_disequation(
     Some((x, y))
 }
 
-fn subst(from: Var, to: &Rc<FOFTerm>, term: &Rc<FOFTerm>) -> Rc<FOFTerm> {
+fn subst(from: Id<Var>, to: &Rc<FOFTerm>, term: &Rc<FOFTerm>) -> Rc<FOFTerm> {
     match &**term {
         FOFTerm::Var(x) if *x == from => to.clone(),
         FOFTerm::Var(_) => term.clone(),

@@ -4,9 +4,9 @@ use std::path::PathBuf;
 #[derive(Clap)]
 #[clap(
     name = "SATCoP",
-    about = "a theorem prover for first-order logic with equality",
-    version = "0.1",
-    author = "Michael Rawson <michael@rawsons.uk>"
+    about = env!("CARGO_PKG_DESCRIPTION"),
+    version = env!("CARGO_PKG_VERSION"),
+    author = env!("CARGO_PKG_AUTHORS")
 )]
 pub(crate) struct Options {
     #[clap(parse(from_os_str), about = "path to input problem")]

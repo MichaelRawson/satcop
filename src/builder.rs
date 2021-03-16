@@ -1,4 +1,4 @@
-use crate::block::{Block, Id, Range};
+use crate::block::{BlockMap, Id, Range};
 use crate::digest::{Digest, DigestMap};
 use crate::options::Options;
 use crate::syntax::*;
@@ -9,7 +9,7 @@ pub(crate) const FALLBACK_GROUNDING: Id<Symbol> = Id::new(0);
 
 pub(crate) struct Builder {
     matrix: Matrix,
-    vars: Block<Id<Term>>,
+    vars: BlockMap<Var, Id<Term>>,
     terms: DigestMap<Id<Term>>,
     goal_constants: FnvHashMap<Id<Symbol>, u32>,
     has_equality: bool,
@@ -18,7 +18,7 @@ pub(crate) struct Builder {
 impl Default for Builder {
     fn default() -> Self {
         let matrix = Matrix::default();
-        let vars = Block::default();
+        let vars = BlockMap::default();
         let terms = DigestMap::default();
         let goal_constants = FnvHashMap::default();
         let has_equality = false;
@@ -59,7 +59,7 @@ impl Builder {
 
     pub(crate) fn new_symbol(&mut self, sym: Symbol) -> Id<Symbol> {
         let id = self.matrix.symbols.push(sym);
-        self.matrix.index.block.push([vec![], vec![]]);
+        self.matrix.index.push([vec![], vec![]]);
         id
     }
 
@@ -67,7 +67,7 @@ impl Builder {
         &mut self,
         clause: CNF,
         orderings: Vec<(Rc<FOFTerm>, Rc<FOFTerm>)>,
-        vars: u32,
+        vars: Id<Var>,
         info: Info,
         constraints: bool,
     ) {
@@ -75,8 +75,8 @@ impl Builder {
         if clause.0.is_empty() || info.is_goal {
             self.matrix.start.push(id);
         }
-        while vars > self.vars.len().index {
-            let var = Var(self.vars.len().index);
+        while vars > self.vars.len() {
+            let var = self.vars.len();
             self.vars.push(self.matrix.terms.push(Term::var(var)));
         }
         let mut disequations = FnvHashSet::default();
@@ -88,7 +88,7 @@ impl Builder {
         let literals = Range::new(lstart, lstop);
         for id1 in literals {
             let lit1 = self.matrix.literals[id1];
-            for id2 in Range::new(Id::new(id1.index + 1), lstop) {
+            for id2 in Range::new(id1.offset(1), lstop) {
                 let lit2 = self.matrix.literals[id2];
                 if lit1.pol != lit2.pol {
                     let left = lit1.atom;
@@ -132,7 +132,7 @@ impl Builder {
             disequations,
             orderings,
         });
-        self.matrix.info.block.push(info);
+        self.matrix.info.push(info);
     }
 
     fn literal(
@@ -148,10 +148,8 @@ impl Builder {
         if symbol == EQUALITY {
             self.has_equality = true;
             if pol {
-                let mut left =
-                    self.matrix.terms[Id::new(atom.index + 1)].as_arg();
-                let mut right =
-                    self.matrix.terms[Id::new(atom.index + 2)].as_arg();
+                let mut left = self.matrix.terms[atom.offset(1)].as_arg();
+                let mut right = self.matrix.terms[atom.offset(2)].as_arg();
                 if left > right {
                     std::mem::swap(&mut left, &mut right);
                 }
@@ -165,7 +163,7 @@ impl Builder {
 
     fn term(&mut self, is_goal: bool, term: &Rc<FOFTerm>) -> Id<Term> {
         match &**term {
-            FOFTerm::Var(Var(y)) => self.vars[Id::new(*y)],
+            FOFTerm::Var(y) => self.vars[*y],
             FOFTerm::Fun(f, ts) => {
                 if is_goal
                     && self.matrix.symbols[*f].arity == 0
@@ -174,12 +172,12 @@ impl Builder {
                     *self.goal_constants.entry(*f).or_default() += 1;
                 }
                 let mut digest = Digest::default();
-                digest.update(f.index);
+                digest.update(f.as_u32());
                 let mut args = vec![];
                 for t in ts {
                     let t = self.term(is_goal, t);
                     args.push(t);
-                    digest.update(t.index);
+                    digest.update(t.as_u32());
                 }
                 if let Some(shared) = self.terms.get(&digest) {
                     return *shared;
@@ -211,8 +209,8 @@ impl Builder {
         }
         let arity = self.matrix.symbols[lsym].arity;
         for _ in 0..arity {
-            left.index += 1;
-            right.index += 1;
+            left.increment();
+            right.increment();
             if !self.possibly_equal(
                 self.matrix.terms[left].as_arg(),
                 self.matrix.terms[right].as_arg(),
@@ -247,8 +245,8 @@ impl Builder {
         let sym = self.matrix.terms[left].as_sym();
         let arity = self.matrix.symbols[sym].arity;
         for _ in 0..arity {
-            left.index += 1;
-            right.index += 1;
+            left.increment();
+            right.increment();
             if self.subsumed(
                 disequations,
                 self.matrix.terms[left].as_arg(),
@@ -261,14 +259,14 @@ impl Builder {
         false
     }
 
-    fn occurs(&self, x: Var, mut t: Id<Term>) -> bool {
+    fn occurs(&self, x: Id<Var>, mut t: Id<Term>) -> bool {
         if self.matrix.terms[t].is_var() {
             x == self.matrix.terms[t].as_var()
         } else {
             let sym = self.matrix.terms[t].as_sym();
             let arity = self.matrix.symbols[sym].arity;
             for _ in 0..arity {
-                t.index += 1;
+                t.increment();
                 if self.occurs(x, self.matrix.terms[t].as_arg()) {
                     return true;
                 }
@@ -282,8 +280,8 @@ impl Builder {
             is_goal: false,
             source: Source::Equality,
         };
-        let v0 = Rc::new(FOFTerm::Var(Var(0)));
-        let v1 = Rc::new(FOFTerm::Var(Var(1)));
+        let v0 = Rc::new(FOFTerm::Var(Id::new(0)));
+        let v1 = Rc::new(FOFTerm::Var(Id::new(1)));
         self.clause(
             CNF(vec![NNFLiteral {
                 pol: true,
@@ -293,14 +291,14 @@ impl Builder {
                 )),
             }]),
             vec![],
-            1,
+            Id::new(1),
             info.clone(),
             false,
         );
         if options.cee {
             return;
         }
-        let v2 = Rc::new(FOFTerm::Var(Var(2)));
+        let v2 = Rc::new(FOFTerm::Var(Id::new(2)));
         self.clause(
             CNF(vec![
                 NNFLiteral {
@@ -319,7 +317,7 @@ impl Builder {
                 },
             ]),
             vec![],
-            2,
+            Id::new(2),
             info.clone(),
             true,
         );
@@ -345,7 +343,7 @@ impl Builder {
                 },
             ]),
             vec![],
-            3,
+            Id::new(3),
             info.clone(),
             true,
         );
@@ -363,8 +361,8 @@ impl Builder {
             let mut args1 = vec![];
             let mut args2 = vec![];
             for i in 0..arity {
-                let v1 = Rc::new(FOFTerm::Var(Var(2 * i)));
-                let v2 = Rc::new(FOFTerm::Var(Var(2 * i + 1)));
+                let v1 = Rc::new(FOFTerm::Var(Id::new(2 * i)));
+                let v2 = Rc::new(FOFTerm::Var(Id::new(2 * i + 1)));
                 lits.push(NNFLiteral {
                     pol: false,
                     atom: Rc::new(FOFTerm::Fun(
@@ -395,7 +393,13 @@ impl Builder {
                     });
                 }
             }
-            self.clause(CNF(lits), vec![], arity * 2, info.clone(), true);
+            self.clause(
+                CNF(lits),
+                vec![],
+                Id::new(arity * 2),
+                info.clone(),
+                true,
+            );
         }
     }
 }

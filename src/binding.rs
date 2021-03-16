@@ -1,13 +1,12 @@
-use crate::block::{Block, Id, Off, Range};
+use crate::block::{Block, BlockMap, Id, Off, Range};
 use crate::syntax::{Symbol, Term, Var};
-use std::ops::Index;
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct Bound(Var);
+pub(crate) struct Bound(Id<Var>);
 
 #[derive(Debug, Default)]
 pub(crate) struct Bindings {
-    bound: Block<Option<Off<Term>>>,
+    bound: BlockMap<Var, Option<Off<Term>>>,
     trail: Block<Bound>,
 }
 
@@ -17,8 +16,7 @@ impl Bindings {
         self.trail.clear();
     }
 
-    pub(crate) fn ensure_capacity(&mut self, max: Var) {
-        let len = Id::new(max.0);
+    pub(crate) fn ensure_capacity(&mut self, len: Id<Var>) {
         self.bound.resize_with(len, Default::default);
     }
 
@@ -28,8 +26,8 @@ impl Bindings {
 
     pub(crate) fn undo_to_mark(&mut self, mark: Id<Bound>) {
         for id in Range::new(mark, self.trail.len()) {
-            let Bound(Var(x)) = self.trail[id];
-            self.bound[Id::new(x)] = None;
+            let Bound(x) = self.trail[id];
+            self.bound[x] = None;
         }
         self.trail.truncate(mark);
     }
@@ -41,7 +39,7 @@ impl Bindings {
     ) -> Off<Term> {
         while terms[term.id].is_var() {
             let x = terms[term.id].as_var().offset(term.offset);
-            if let Some(bound) = self[x] {
+            if let Some(bound) = self.bound[x] {
                 term = bound;
             } else {
                 break;
@@ -64,8 +62,8 @@ impl Bindings {
         }
         let arity = syms[lsym].arity;
         for _ in 0..arity {
-            left.id.index += 1;
-            right.id.index += 1;
+            left.id.increment();
+            right.id.increment();
             let s = Off::new(terms[left.id].as_arg(), left.offset);
             let t = Off::new(terms[right.id].as_arg(), right.offset);
             let s = self.resolve(terms, s);
@@ -126,8 +124,8 @@ impl Bindings {
         }
         let arity = syms[lsym].arity;
         for _ in 0..arity {
-            left.id.index += 1;
-            right.id.index += 1;
+            left.id.increment();
+            right.id.increment();
             let s = Off::new(terms[left.id].as_arg(), left.offset);
             let t = Off::new(terms[right.id].as_arg(), right.offset);
             if !self.equal(syms, terms, s, t) {
@@ -141,7 +139,7 @@ impl Bindings {
         &self,
         syms: &Block<Symbol>,
         terms: &Block<Term>,
-        x: Var,
+        x: Id<Var>,
         mut t: Off<Term>,
     ) -> bool {
         if terms[t.id].is_var() {
@@ -150,7 +148,7 @@ impl Bindings {
         } else {
             let arity = syms[terms[t.id].as_sym()].arity;
             for _ in 0..arity {
-                t.id.index += 1;
+                t.id.increment();
                 let t = Off::new(terms[t.id].as_arg(), t.offset);
                 let t = self.resolve(terms, t);
                 if self.occurs(syms, terms, x, t) {
@@ -165,7 +163,7 @@ impl Bindings {
         &mut self,
         syms: &Block<Symbol>,
         terms: &Block<Term>,
-        x: Var,
+        x: Id<Var>,
         t: Off<Term>,
     ) -> bool {
         if self.occurs(syms, terms, x, t) {
@@ -175,15 +173,8 @@ impl Bindings {
         true
     }
 
-    fn bind(&mut self, x: Var, t: Off<Term>) {
+    fn bind(&mut self, x: Id<Var>, t: Off<Term>) {
         self.trail.push(Bound(x));
-        self.bound[Id::new(x.0)] = Some(t);
-    }
-}
-
-impl Index<Var> for Bindings {
-    type Output = Option<Off<Term>>;
-    fn index(&self, x: Var) -> &Self::Output {
-        &self.bound[Id::new(x.0)]
+        self.bound[x] = Some(t);
     }
 }

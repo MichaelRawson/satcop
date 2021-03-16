@@ -11,6 +11,10 @@ pub(crate) enum Sort {
     Obj,
 }
 
+pub(crate) struct Skolem;
+
+pub(crate) struct Definition;
+
 pub(crate) enum Name {
     Grounding,
     Equality,
@@ -18,8 +22,8 @@ pub(crate) enum Name {
     Quoted(String),
     Number(String),
     Distinct(String),
-    Skolem(u32),
-    Definition(u32),
+    Skolem(Id<Skolem>),
+    Definition(Id<Definition>),
 }
 
 impl fmt::Display for Name {
@@ -30,8 +34,8 @@ impl fmt::Display for Name {
             Self::Atom(s) | Self::Number(s) => write!(f, "{}", s),
             Self::Quoted(quoted) => write!(f, "'{}'", quoted),
             Self::Distinct(distinct) => write!(f, "\"{}\"", distinct),
-            Self::Skolem(n) => write!(f, "sK{}", n),
-            Self::Definition(n) => write!(f, "sP{}", n),
+            Self::Skolem(n) => write!(f, "sK{}", n.as_u32()),
+            Self::Definition(n) => write!(f, "sP{}", n.as_u32()),
         }
     }
 }
@@ -54,43 +58,31 @@ impl fmt::Debug for Symbol {
     }
 }
 
-#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(crate) struct Var(pub(crate) u32);
-
-impl Var {
-    pub(crate) fn offset(&self, offset: u32) -> Self {
-        Self(self.0 + offset)
-    }
-}
-
-impl fmt::Debug for Var {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "X{}", self.0)
-    }
-}
+#[derive(Debug)]
+pub(crate) struct Var;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct Term(i32);
 
 impl Term {
-    pub(crate) fn var(x: Var) -> Self {
-        Self(-(x.0 as i32))
+    pub(crate) fn var(x: Id<Var>) -> Self {
+        Self(-(x.as_u32() as i32))
     }
 
     pub(crate) fn sym(f: Id<Symbol>) -> Self {
-        Self(f.index as i32)
+        Self(f.as_u32() as i32)
     }
 
     pub(crate) fn arg(arg: Id<Self>) -> Self {
-        Self(arg.index as i32)
+        Self(arg.as_u32() as i32)
     }
 
     pub(crate) fn is_var(&self) -> bool {
         self.0 <= 0
     }
 
-    pub(crate) fn as_var(&self) -> Var {
-        Var(-self.0 as u32)
+    pub(crate) fn as_var(&self) -> Id<Var> {
+        Id::new(-self.0 as u32)
     }
 
     pub(crate) fn as_sym(&self) -> Id<Symbol> {
@@ -137,7 +129,7 @@ pub(crate) struct Ordering {
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Clause {
-    pub(crate) vars: u32,
+    pub(crate) vars: Id<Var>,
     pub(crate) literals: Range<Literal>,
     pub(crate) disequations: Range<Disequation>,
     pub(crate) orderings: Range<Ordering>,
@@ -179,7 +171,7 @@ impl Matrix {
     pub(crate) fn print_cnf(&self) {
         let mut bindings = Bindings::default();
         for id in self.clauses.range() {
-            print!("cnf(c{}, ", id.index);
+            print!("cnf(c{}, ", id.as_u32());
             if self.info[id].is_goal {
                 print!("negated_conjecture, ");
             } else {
@@ -189,7 +181,7 @@ impl Matrix {
             if clause.literals.is_empty() {
                 print!("$false")
             } else {
-                bindings.ensure_capacity(Var(clause.vars));
+                bindings.ensure_capacity(clause.vars);
                 for id in clause.literals {
                     if id != clause.literals.start {
                         print!(" | ");
@@ -240,7 +232,10 @@ impl Matrix {
     pub(crate) fn print_term(&self, bindings: &Bindings, term: Off<Term>) {
         let mut term = bindings.resolve(&self.terms, term);
         if self.terms[term.id].is_var() {
-            print!("X{}", self.terms[term.id].as_var().offset(term.offset).0);
+            print!(
+                "X{}",
+                self.terms[term.id].as_var().offset(term.offset).as_u32()
+            );
         } else {
             let sym = self.terms[term.id].as_sym();
             let arity = self.symbols[sym].arity;
@@ -253,7 +248,7 @@ impl Matrix {
                 if i != 0 {
                     print!(",");
                 }
-                term.id.index += 1;
+                term.id.increment();
                 let arg = self.terms[term.id].as_arg();
                 self.print_term(bindings, Off::new(arg, term.offset));
             }
@@ -264,15 +259,15 @@ impl Matrix {
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum FOFTerm {
-    Var(Var),
+    Var(Id<Var>),
     Fun(Id<Symbol>, Vec<Rc<FOFTerm>>),
 }
 
 impl FOFTerm {
-    fn vars(&self, vars: &mut Vec<bool>) {
+    fn vars(&self, vars: &mut BlockMap<Var, bool>) {
         match self {
             Self::Var(x) => {
-                vars[x.0 as usize] = true;
+                vars[*x] = true;
             }
             Self::Fun(_, ts) => {
                 for t in ts {
@@ -300,7 +295,7 @@ pub(crate) enum FOFAtom {
 }
 
 impl FOFAtom {
-    pub(crate) fn vars(&self, vars: &mut Vec<bool>) {
+    pub(crate) fn vars(&self, vars: &mut BlockMap<Var, bool>) {
         match self {
             Self::Bool(_) => {}
             Self::Pred(p) => {
@@ -325,8 +320,8 @@ pub(crate) enum FOF {
     And(Vec<FOF>),
     Or(Vec<FOF>),
     Eqv(Box<FOF>, Box<FOF>),
-    All(Var, Box<FOF>),
-    Ex(Var, Box<FOF>),
+    All(Id<Var>, Box<FOF>),
+    Ex(Id<Var>, Box<FOF>),
 }
 
 impl FOF {
@@ -334,7 +329,7 @@ impl FOF {
         Self::Not(Box::new(self))
     }
 
-    pub(crate) fn vars(&self, vars: &mut Vec<bool>) {
+    pub(crate) fn vars(&self, vars: &mut BlockMap<Var, bool>) {
         match self {
             Self::Atom(atom) => {
                 atom.vars(vars);
@@ -389,8 +384,8 @@ pub(crate) enum NNF {
     Lit(NNFLiteral),
     And(Vec<NNF>),
     Or(Vec<NNF>),
-    All(Var, Box<NNF>),
-    Ex(Var, Box<NNF>),
+    All(Id<Var>, Box<NNF>),
+    Ex(Id<Var>, Box<NNF>),
 }
 
 pub(crate) struct CNF(pub(crate) Vec<NNFLiteral>);
