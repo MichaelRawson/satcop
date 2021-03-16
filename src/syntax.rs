@@ -9,10 +9,10 @@ pub(crate) const EQUALITY: Id<Symbol> = Id::new(1);
 pub(crate) enum Sort {
     Bool,
     Obj,
-    Unused,
 }
 
 pub(crate) enum Name {
+    Grounding,
     Equality,
     Atom(String),
     Quoted(String),
@@ -20,19 +20,18 @@ pub(crate) enum Name {
     Distinct(String),
     Skolem(u32),
     Definition(u32),
-    Unused,
 }
 
 impl fmt::Display for Name {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
+            Self::Grounding => write!(f, "sG"),
             Self::Equality => write!(f, "sPE"),
             Self::Atom(s) | Self::Number(s) => write!(f, "{}", s),
             Self::Quoted(quoted) => write!(f, "'{}'", quoted),
             Self::Distinct(distinct) => write!(f, "\"{}\"", distinct),
             Self::Skolem(n) => write!(f, "sK{}", n),
             Self::Definition(n) => write!(f, "sP{}", n),
-            Self::Unused => unreachable!(),
         }
     }
 }
@@ -150,9 +149,16 @@ pub(crate) struct Position {
     pub(crate) lit: Id<Literal>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) enum Source {
+    Equality,
+    Axiom { path: Rc<str>, name: String },
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct Info {
     pub(crate) is_goal: bool,
+    pub(crate) source: Source,
 }
 
 #[derive(Debug, Default)]
@@ -380,9 +386,9 @@ impl fmt::Debug for NNFLiteral {
 
 #[derive(Debug)]
 pub(crate) enum NNF {
-    Lit(bool, Rc<FOFTerm>),
-    Or(Vec<NNF>),
+    Lit(NNFLiteral),
     And(Vec<NNF>),
+    Or(Vec<NNF>),
     All(Var, Box<NNF>),
     Ex(Var, Box<NNF>),
 }

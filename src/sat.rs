@@ -1,8 +1,38 @@
 use crate::binding::Bindings;
-use crate::block::{Id, Off};
+use crate::block::{Block, BlockMap, Id, Off};
 use crate::cdcl;
 use crate::digest::{Digest, DigestMap, DigestSet};
-use crate::syntax::{Clause, Literal, Matrix, Term};
+use crate::syntax::*;
+use std::io::Write;
+
+#[derive(Debug, Clone, Copy)]
+struct Record(u32);
+
+impl Record {
+    fn arg(id: Id<Self>) -> Self {
+        Self(id.index)
+    }
+
+    fn sym(id: Id<Symbol>) -> Self {
+        Self(id.index)
+    }
+
+    fn var() -> Self {
+        Self(u32::MAX)
+    }
+
+    fn is_var(self) -> bool {
+        self.0 == u32::MAX
+    }
+
+    fn as_arg(self) -> Id<Self> {
+        Id::new(self.0)
+    }
+
+    fn as_sym(self) -> Id<Symbol> {
+        Id::new(self.0)
+    }
+}
 
 #[derive(Default)]
 pub(crate) struct Solver {
@@ -11,6 +41,10 @@ pub(crate) struct Solver {
     atoms: DigestMap<Id<cdcl::Atom>>,
     cache: DigestSet,
     new_clause: bool,
+    origins: BlockMap<cdcl::Clause, Id<Clause>>,
+    record_terms: Block<Record>,
+    record_cache: DigestMap<Id<Record>>,
+    atom_record: BlockMap<cdcl::Atom, Id<Record>>,
 }
 
 impl Solver {
@@ -39,7 +73,10 @@ impl Solver {
                 }
             }
             if self.cache.insert(digest) {
-                self.cdcl.assert(&self.scratch);
+                let new = self.cdcl.assert(&self.scratch);
+                let len = Id::new(new.index + 1);
+                self.origins.block.resize_with(len, Id::default);
+                self.origins[new] = clause.id;
                 self.new_clause = true;
             }
             self.scratch.clear();
@@ -67,6 +104,79 @@ impl Solver {
         }
     }
 
+    pub(crate) fn print_proof<W: Write>(
+        &self,
+        w: &mut W,
+        matrix: &Matrix,
+    ) -> anyhow::Result<()> {
+        for (gi, record) in self.cdcl.core().into_iter().enumerate() {
+            let origin = self.origins[record];
+            write!(w, "fof(g{}, plain, ", gi)?;
+            let record = self.cdcl.clauses[record];
+            if record.literals.is_empty() {
+                write!(w, "$false")?;
+            } else {
+                let mut print_sep = false;
+                for literal in record.literals {
+                    let literal = self.cdcl.literals[literal];
+                    if print_sep {
+                        write!(w, " | ")?;
+                    }
+                    if !literal.pol {
+                        write!(w, "~")?;
+                    }
+                    let record = self.atom_record[literal.atom];
+                    self.print_record(w, matrix, record)?;
+                    print_sep = true;
+                }
+            }
+            write!(w, ", inference(record, [], [")?;
+            match &matrix.info[origin].source {
+                Source::Equality => {
+                    write!(w, "theory(equality)")?;
+                }
+                Source::Axiom { path, name } => {
+                    write!(w, "file('{}', {})", path, name)?;
+                }
+            }
+            writeln!(w, "])).")?;
+        }
+        Ok(())
+    }
+
+    fn print_record<W: Write>(
+        &self,
+        w: &mut W,
+        matrix: &Matrix,
+        mut record: Id<Record>,
+    ) -> anyhow::Result<()> {
+        let sym = self.record_terms[record].as_sym();
+        write!(w, "{}", &matrix.symbols[sym].name)?;
+        let arity = matrix.symbols[sym].arity;
+        if arity == 0 {
+            return Ok(());
+        }
+        write!(w, "(")?;
+        for i in 0..arity {
+            record.index += 1;
+            if i > 0 {
+                write!(w, ",")?;
+            }
+            if self.record_terms[record].is_var() {
+                write!(
+                    w,
+                    "{}",
+                    &matrix.symbols[matrix.grounding_constant].name
+                )?;
+            } else {
+                let arg = self.record_terms[record].as_arg();
+                self.print_record(w, matrix, arg)?;
+            }
+        }
+        write!(w, ")")?;
+        Ok(())
+    }
+
     fn literal(
         &mut self,
         matrix: &Matrix,
@@ -78,11 +188,16 @@ impl Solver {
         let mut digest = Digest::default();
         self.term(&mut digest, matrix, bindings, atom);
         let cdcl = &mut self.cdcl;
-        let atom = *self
-            .atoms
-            .entry(digest)
-            .or_insert_with(|| cdcl.fresh_atom());
-        cdcl::Literal { pol, atom }
+        let mut new = false;
+        let sat = *self.atoms.entry(digest).or_insert_with(|| {
+            new = true;
+            cdcl.fresh_atom()
+        });
+        if new {
+            let record = self.record(matrix, bindings, atom);
+            self.atom_record.block.push(record);
+        }
+        cdcl::Literal { pol, atom: sat }
     }
 
     fn term(
@@ -147,5 +262,41 @@ impl Solver {
             };
         }
         true
+    }
+
+    fn record(
+        &mut self,
+        matrix: &Matrix,
+        bindings: &Bindings,
+        term: Off<Term>,
+    ) -> Id<Record> {
+        let sym = matrix.terms[term.id].as_sym();
+        let mut recorded = vec![Record::sym(sym)];
+        let mut digest = Digest::default();
+        digest.update(sym.index);
+
+        let arity = matrix.symbols[sym].arity;
+        let mut argit = term.id;
+        for _ in 0..arity {
+            argit.index += 1;
+            let arg = matrix.terms[argit].as_arg();
+            let arg =
+                bindings.resolve(&matrix.terms, Off::new(arg, term.offset));
+            let arg = if matrix.terms[arg.id].is_var() {
+                Record::var()
+            } else {
+                Record::arg(self.record(matrix, bindings, arg))
+            };
+            recorded.push(arg);
+            digest.update(arg.0);
+        }
+        let record_terms = &mut self.record_terms;
+        *self.record_cache.entry(digest).or_insert_with(|| {
+            let start = record_terms.len();
+            for record in recorded {
+                record_terms.push(record);
+            }
+            start
+        })
     }
 }

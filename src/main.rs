@@ -43,6 +43,9 @@ fn go(options: Arc<Options>) {
         tstp::unsatisfiable(&mut lock, &options)
             .context("printing unsat")
             .unwrap_or_else(report_err);
+        tstp::print_proof(&mut lock, &options, &search)
+            .context("printing proof")
+            .unwrap_or_else(report_err);
         std::process::exit(0);
     } else {
         let stdout = stdout();

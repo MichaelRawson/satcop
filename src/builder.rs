@@ -31,8 +31,8 @@ impl Default for Builder {
         };
         result.new_symbol(Symbol {
             arity: 0,
-            sort: Sort::Unused,
-            name: Name::Unused,
+            sort: Sort::Obj,
+            name: Name::Grounding,
         });
         result.new_symbol(Symbol {
             arity: 2,
@@ -278,6 +278,10 @@ impl Builder {
     }
 
     fn add_equality_axioms(&mut self, options: &Options) {
+        let info = Info {
+            is_goal: false,
+            source: Source::Equality,
+        };
         let v0 = Rc::new(FOFTerm::Var(Var(0)));
         let v1 = Rc::new(FOFTerm::Var(Var(1)));
         self.clause(
@@ -290,7 +294,7 @@ impl Builder {
             }]),
             vec![],
             1,
-            Info { is_goal: false },
+            info.clone(),
             false,
         );
         if options.cee {
@@ -316,7 +320,7 @@ impl Builder {
             ]),
             vec![],
             2,
-            Info { is_goal: false },
+            info.clone(),
             true,
         );
         self.clause(
@@ -342,12 +346,9 @@ impl Builder {
             ]),
             vec![],
             3,
-            Info { is_goal: false },
+            info.clone(),
             true,
         );
-        if options.cee {
-            return;
-        }
         for id in self.matrix.symbols.range() {
             let sym = &self.matrix.symbols[id];
             if !sym.name.needs_congruence() {
@@ -393,15 +394,8 @@ impl Builder {
                         atom: t2,
                     });
                 }
-                Sort::Unused => unreachable!(),
             }
-            self.clause(
-                CNF(lits),
-                vec![],
-                arity * 2,
-                Info { is_goal: false },
-                true,
-            );
+            self.clause(CNF(lits), vec![], arity * 2, info.clone(), true);
         }
     }
 }

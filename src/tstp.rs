@@ -1,4 +1,5 @@
 use crate::options::Options;
+use crate::search::Search;
 use crate::tptp::{SyntaxError, Unsupported};
 use std::io::Write;
 
@@ -29,6 +30,15 @@ pub(crate) fn gaveup<W: Write>(
     Ok(())
 }
 
+pub(crate) fn timeout<W: Write>(
+    w: &mut W,
+    options: &Options,
+) -> anyhow::Result<()> {
+    let name = get_problem_name(options);
+    writeln!(w, "% SZS status TimeOut for {}", name)?;
+    Ok(())
+}
+
 pub(crate) fn unsatisfiable<W: Write>(
     w: &mut W,
     options: &Options,
@@ -38,11 +48,14 @@ pub(crate) fn unsatisfiable<W: Write>(
     Ok(())
 }
 
-pub(crate) fn timeout<W: Write>(
+pub(crate) fn print_proof<W: Write>(
     w: &mut W,
     options: &Options,
+    search: &Search,
 ) -> anyhow::Result<()> {
     let name = get_problem_name(options);
-    writeln!(w, "% SZS status TimeOut for {}", name)?;
+    writeln!(w, "% SZS output begin Proof for {}", name)?;
+    search.print_proof(w)?;
+    writeln!(w, "% SZS output end Proof for {}", name)?;
     Ok(())
 }

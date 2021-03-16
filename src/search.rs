@@ -6,6 +6,7 @@ use crate::syntax::{Clause, Literal, Matrix, Term, Var};
 use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
 use rand::SeedableRng;
+use std::io::Write;
 
 #[derive(Debug, Clone, Copy)]
 struct Constraint {
@@ -61,6 +62,13 @@ impl<'matrix> Search<'matrix> {
                 self.depth_limit += 1;
             }
         }
+    }
+
+    pub(crate) fn print_proof<W: Write>(
+        &self,
+        w: &mut W,
+    ) -> anyhow::Result<()> {
+        self.solver.print_proof(w, self.matrix)
     }
 
     fn start(&mut self, id: Id<Clause>) -> bool {

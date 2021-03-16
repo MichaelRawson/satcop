@@ -452,6 +452,7 @@ impl Loader {
         &mut self,
         options: &Options,
         selection: Option<&FnvHashSet<Name>>,
+        path: Rc<str>,
         annotated: Annotated<D>,
     ) -> anyhow::Result<()> {
         if selection
@@ -464,7 +465,10 @@ impl Loader {
         let role = (annotated.role.0).0;
         let negate = role == "conjecture";
         let is_goal = negate || role == "negated_conjecture";
-        let info = syntax::Info { is_goal };
+        let source = syntax::Source::Axiom {
+            path,
+            name: format!("{}", &annotated.name),
+        };
 
         self.fresh = 0;
         self.free.clear();
@@ -472,7 +476,8 @@ impl Loader {
         if negate {
             formula = formula.negated();
         }
-        self.pp.process(options, formula, info, self.fresh);
+        self.pp
+            .process(options, formula, is_goal, source, self.fresh);
         Ok(())
     }
 
@@ -483,6 +488,7 @@ impl Loader {
         selection: Option<FnvHashSet<Name>>,
         path: &path::Path,
     ) -> anyhow::Result<()> {
+        let display_path: Rc<str> = format!("'{}'", path.display()).into();
         let map = read_path(parent, path)?;
         let bytes = map.as_deref().unwrap_or_default();
         let statements = TPTPIterator::<()>::new(bytes);
@@ -492,10 +498,20 @@ impl Loader {
             match statement {
                 TPTPInput::Annotated(annotated) => match *annotated {
                     AnnotatedFormula::Fof(fof) => {
-                        self.annotated(options, selection.as_ref(), fof.0)?;
+                        self.annotated(
+                            options,
+                            selection.as_ref(),
+                            display_path.clone(),
+                            fof.0,
+                        )?;
                     }
                     AnnotatedFormula::Cnf(cnf) => {
-                        self.annotated(options, selection.as_ref(), cnf.0)?;
+                        self.annotated(
+                            options,
+                            selection.as_ref(),
+                            display_path.clone(),
+                            cnf.0,
+                        )?;
                     }
                 },
                 TPTPInput::Include(include) => {

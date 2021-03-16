@@ -31,38 +31,48 @@ impl PP {
         &mut self,
         opts: &Options,
         mut formula: FOF,
-        info: Info,
+        is_goal: bool,
+        source: Source,
         max_var: u32,
     ) {
         self.subst.clear();
         self.subst.resize(max_var as usize, None);
-        self.name(opts, Some(true), &mut formula, false, &info);
-        self.after_naming(opts, formula, &info);
+        self.name(opts, Some(true), &mut formula, &source, false);
+        self.after_naming(opts, formula, is_goal, &source);
     }
 
     pub(crate) fn finish(self, opts: &Options) -> Matrix {
         self.builder.finish(opts)
     }
 
-    fn after_naming(&mut self, opts: &Options, formula: FOF, info: &Info) {
+    fn after_naming(
+        &mut self,
+        opts: &Options,
+        formula: FOF,
+        is_goal: bool,
+        source: &Source,
+    ) {
         let nnf = self.nnf(true, &formula);
-        for mut clause in self.cnf(nnf, &info) {
+        for mut clause in self.cnf(nnf) {
             if opts.cee {
-                self.cee(clause, info);
+                self.cee(clause, is_goal, &source);
             } else {
                 self.rename_clause(self.subst.len() as u32, &mut clause);
                 self.builder.clause(
                     clause,
                     vec![],
                     self.fresh_rename,
-                    info.clone(),
+                    Info {
+                        is_goal,
+                        source: source.clone(),
+                    },
                     true,
                 );
             }
         }
     }
 
-    fn cee(&mut self, mut clause: CNF, info: &Info) {
+    fn cee(&mut self, mut clause: CNF, is_goal: bool, source: &Source) {
         let mut fresh = self.subst.len() as u32;
         cee::monotonicity(&mut fresh, &mut clause);
         cee::reflexivity(&mut clause);
@@ -80,7 +90,10 @@ impl PP {
                 clause,
                 orderings,
                 self.fresh_rename,
-                info.clone(),
+                Info {
+                    is_goal,
+                    source: source.clone(),
+                },
                 true,
             );
         }
@@ -91,8 +104,8 @@ impl PP {
         opts: &Options,
         pol: Option<bool>,
         formula: &mut FOF,
+        source: &Source,
         name: bool,
-        info: &Info,
     ) -> (u32, u32) {
         let cap = |n| std::cmp::min(opts.naming + 1, n);
         let (p, np) = match formula {
@@ -101,14 +114,14 @@ impl PP {
             FOF::Atom(FOFAtom::Pred(_)) => (1, 1),
             FOF::Not(f) => {
                 let (p, np) =
-                    self.name(opts, pol.map(|pol| !pol), f, name, info);
+                    self.name(opts, pol.map(|pol| !pol), f, source, name);
                 (np, p)
             }
             FOF::Or(fs) => {
                 let mut p_all = 1;
                 let mut np_all = 0;
                 for f in fs {
-                    let (p, np) = self.name(opts, pol, f, true, info);
+                    let (p, np) = self.name(opts, pol, f, source, true);
                     p_all = cap(p_all * p);
                     np_all = cap(np_all + np);
                 }
@@ -118,20 +131,20 @@ impl PP {
                 let mut p_all = 0;
                 let mut np_all = 1;
                 for f in fs {
-                    let (p, np) = self.name(opts, pol, f, false, info);
+                    let (p, np) = self.name(opts, pol, f, source, false);
                     p_all = cap(p_all + p);
                     np_all = cap(np_all * np);
                 }
                 (p_all, np_all)
             }
             FOF::Eqv(l, r) => {
-                let (l, nl) = self.name(opts, None, l, true, info);
-                let (r, nr) = self.name(opts, None, r, true, info);
+                let (l, nl) = self.name(opts, None, l, source, true);
+                let (r, nr) = self.name(opts, None, r, source, true);
 
                 (nl * r + nr * l, l * r + nr * nl)
             }
             FOF::All(_, f) | FOF::Ex(_, f) => {
-                self.name(opts, pol, f, name, info)
+                self.name(opts, pol, f, source, name)
             }
         };
         let num = match pol {
@@ -143,7 +156,7 @@ impl PP {
             let (vars, definition) = self.definition(formula);
             let formula =
                 std::mem::replace(formula, FOF::Atom(definition.clone()));
-            self.define(opts, pol, vars, definition, formula, info);
+            self.define(opts, pol, vars, definition, source, formula);
             (1, 1)
         } else {
             (p, np)
@@ -179,8 +192,8 @@ impl PP {
         pol: Option<bool>,
         mut vars: Vec<Var>,
         definition: FOFAtom,
+        source: &Source,
         formula: FOF,
-        info: &Info,
     ) {
         let definition = FOF::Atom(definition);
         let mut formula = match pol {
@@ -191,9 +204,7 @@ impl PP {
         while let Some(x) = vars.pop() {
             formula = FOF::All(x, Box::new(formula));
         }
-        let mut info = info.clone();
-        info.is_goal = false;
-        self.after_naming(opts, formula, &info);
+        self.after_naming(opts, formula, false, source);
     }
 
     fn nnf(&mut self, pol: bool, formula: &FOF) -> NNF {
@@ -205,9 +216,10 @@ impl PP {
                     NNF::And(vec![NNF::Or(vec![])])
                 }
             }
-            (pol, FOF::Atom(FOFAtom::Pred(pred))) => {
-                NNF::Lit(pol, pred.clone())
-            }
+            (pol, FOF::Atom(FOFAtom::Pred(pred))) => NNF::Lit(NNFLiteral {
+                pol,
+                atom: pred.clone(),
+            }),
             (pol, FOF::Not(f)) => self.nnf(!pol, &**f),
             (true, FOF::And(fs)) | (false, FOF::Or(fs)) => {
                 NNF::And(fs.iter().map(|f| self.nnf(pol, f)).collect())
@@ -228,21 +240,19 @@ impl PP {
         }
     }
 
-    fn cnf(&mut self, formula: NNF, info: &Info) -> Vec<CNF> {
+    fn cnf(&mut self, formula: NNF) -> Vec<CNF> {
         let clauses = match formula {
-            NNF::Lit(pol, pred) => {
+            NNF::Lit(NNFLiteral { pol, atom }) => {
                 vec![CNF(vec![NNFLiteral {
                     pol,
-                    atom: self.substitute(&pred),
+                    atom: self.substitute(&atom),
                 }])]
             }
-            NNF::And(fs) => {
-                fs.into_iter().flat_map(|f| self.cnf(f, info)).collect()
-            }
+            NNF::And(fs) => fs.into_iter().flat_map(|f| self.cnf(f)).collect(),
             NNF::Or(fs) => {
                 let mut result = vec![CNF(vec![])];
                 for f in fs {
-                    let cnf = self.cnf(f, info);
+                    let cnf = self.cnf(f);
                     result = Self::distribute(result, cnf);
                 }
                 result
@@ -250,7 +260,7 @@ impl PP {
             NNF::All(x, f) => {
                 let bound = Rc::new(FOFTerm::Var(x));
                 self.bound.push(bound);
-                let result = self.cnf(*f, info);
+                let result = self.cnf(*f);
                 self.bound.pop();
                 result
             }
@@ -262,7 +272,7 @@ impl PP {
                 let sym = self.new_symbol(Symbol { arity, sort, name });
                 let skolem = Rc::new(FOFTerm::Fun(sym, self.bound.clone()));
                 self.subst[x.0 as usize] = Some(skolem);
-                self.cnf(*f, info)
+                self.cnf(*f)
             }
         };
         let mut result = vec![];
