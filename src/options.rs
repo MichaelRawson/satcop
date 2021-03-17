@@ -15,18 +15,14 @@ pub(crate) struct Options {
     #[clap(long, about = "Print normal form and exit")]
     pub(crate) clausify: bool,
 
+    #[clap(long, about = "Apply constrained equality elimination")]
+    pub(crate) cee: bool,
+
+    #[clap(long, about = "Print a proof, if found")]
+    pub(crate) proof: bool,
+
     #[clap(long, default_value = "10", about = "time limit (secs)")]
     pub(crate) time: u64,
-
-    #[clap(
-        long,
-        default_value = "32",
-        about = "threshold for naming subformulae"
-    )]
-    pub(crate) naming: u32,
-
-    #[clap(long, about = "apply constrained equality elimination")]
-    pub(crate) cee: bool,
 }
 
 impl Options {

@@ -11,7 +11,6 @@ pub(crate) struct PP {
     bound: Vec<Rc<FOFTerm>>,
     subst: BlockMap<Var, Option<Rc<FOFTerm>>>,
     fresh_skolem: Id<Skolem>,
-    fresh_definition: Id<Definition>,
     rename: BlockMap<Var, Option<Id<Var>>>,
     fresh_rename: Id<Var>,
 }
@@ -24,29 +23,28 @@ impl PP {
     pub(crate) fn process(
         &mut self,
         opts: &Options,
-        mut formula: FOF,
+        formula: FOF,
         is_goal: bool,
         source: Source,
         max_var: Id<Var>,
     ) {
         self.subst.clear();
         self.subst.resize_with(max_var, Option::default);
-        self.name(opts, Some(true), &mut formula, &source, false);
-        self.after_naming(opts, formula, is_goal, &source);
+        let nnf = self.nnf(true, &formula);
+        self.clausify(opts, nnf, is_goal, &source);
     }
 
     pub(crate) fn finish(self, opts: &Options) -> Matrix {
         self.builder.finish(opts)
     }
 
-    fn after_naming(
+    fn clausify(
         &mut self,
         opts: &Options,
-        formula: FOF,
+        nnf: NNF,
         is_goal: bool,
         source: &Source,
     ) {
-        let nnf = self.nnf(true, &formula);
         for mut clause in self.cnf(nnf) {
             if opts.cee {
                 self.cee(clause, is_goal, &source);
@@ -93,113 +91,6 @@ impl PP {
         }
     }
 
-    fn name(
-        &mut self,
-        opts: &Options,
-        pol: Option<bool>,
-        formula: &mut FOF,
-        source: &Source,
-        name: bool,
-    ) -> (u32, u32) {
-        let cap = |n| std::cmp::min(opts.naming + 1, n);
-        let (p, np) = match formula {
-            FOF::Atom(FOFAtom::Bool(false)) => (1, 0),
-            FOF::Atom(FOFAtom::Bool(true)) => (0, 1),
-            FOF::Atom(FOFAtom::Pred(_)) => (1, 1),
-            FOF::Not(f) => {
-                let (p, np) =
-                    self.name(opts, pol.map(|pol| !pol), f, source, name);
-                (np, p)
-            }
-            FOF::Or(fs) => {
-                let mut p_all = 1;
-                let mut np_all = 0;
-                for f in fs {
-                    let (p, np) = self.name(opts, pol, f, source, true);
-                    p_all = cap(p_all * p);
-                    np_all = cap(np_all + np);
-                }
-                (p_all, np_all)
-            }
-            FOF::And(fs) => {
-                let mut p_all = 0;
-                let mut np_all = 1;
-                for f in fs {
-                    let (p, np) = self.name(opts, pol, f, source, false);
-                    p_all = cap(p_all + p);
-                    np_all = cap(np_all * np);
-                }
-                (p_all, np_all)
-            }
-            FOF::Eqv(l, r) => {
-                let (l, nl) = self.name(opts, None, l, source, true);
-                let (r, nr) = self.name(opts, None, r, source, true);
-
-                (nl * r + nr * l, l * r + nr * nl)
-            }
-            FOF::All(_, f) | FOF::Ex(_, f) => {
-                self.name(opts, pol, f, source, name)
-            }
-        };
-        let num = match pol {
-            Some(true) => p,
-            Some(false) => np,
-            None => p + np,
-        };
-        if name && num > opts.naming {
-            let (vars, definition) = self.definition(formula);
-            let formula =
-                std::mem::replace(formula, FOF::Atom(definition.clone()));
-            self.define(opts, pol, vars, definition, source, formula);
-            (1, 1)
-        } else {
-            (p, np)
-        }
-    }
-
-    fn definition(&mut self, formula: &FOF) -> (Vec<Id<Var>>, FOFAtom) {
-        let mut vars = BlockMap::default();
-        vars.resize_with(self.subst.len(), Default::default);
-        formula.vars(&mut vars);
-        let vars = vars
-            .range()
-            .into_iter()
-            .filter(|id| vars[*id])
-            .collect::<Vec<_>>();
-        let arity = vars.len() as u32;
-        let args = vars
-            .iter()
-            .copied()
-            .map(|x| Rc::new(FOFTerm::Var(x)))
-            .collect::<Vec<_>>();
-        let sort = Sort::Bool;
-        let name = Name::Definition(self.fresh_definition);
-        self.fresh_definition.increment();
-        let sym = self.new_symbol(Symbol { arity, sort, name });
-        (vars, FOFAtom::Pred(Rc::new(FOFTerm::Fun(sym, args))))
-    }
-
-    fn define(
-        &mut self,
-        opts: &Options,
-        pol: Option<bool>,
-        mut vars: Vec<Id<Var>>,
-        definition: FOFAtom,
-        source: &Source,
-        formula: FOF,
-    ) {
-        let definition = FOF::Atom(definition);
-        let mut formula = match pol {
-            Some(true) => FOF::Or(vec![definition.negated(), formula]),
-            Some(false) => FOF::Or(vec![formula.negated(), definition]),
-            None => FOF::Eqv(Box::new(definition), Box::new(formula)),
-        };
-        while let Some(x) = vars.pop() {
-            formula = FOF::All(x, Box::new(formula));
-        }
-        self.after_naming(opts, formula, false, source);
-    }
-
     fn nnf(&mut self, pol: bool, formula: &FOF) -> NNF {
         match (pol, formula) {
             (pol, FOF::Atom(FOFAtom::Bool(b))) => {
@@ -220,10 +111,16 @@ impl PP {
             (true, FOF::Or(fs)) | (false, FOF::And(fs)) => {
                 NNF::Or(fs.iter().map(|f| self.nnf(pol, f)).collect())
             }
-            (pol, FOF::Eqv(l, r)) => NNF::And(vec![
-                NNF::Or(vec![self.nnf(!pol, l), self.nnf(true, r)]),
-                NNF::Or(vec![self.nnf(false, r), self.nnf(pol, l)]),
-            ]),
+            (pol, FOF::Eqv(l, r)) => {
+                let lnnf = self.nnf(pol, l);
+                let nlnnf = lnnf.negated();
+                let rnnf = self.nnf(true, r);
+                let nrnnf = rnnf.negated();
+                NNF::And(vec![
+                    NNF::Or(vec![nlnnf, rnnf]),
+                    NNF::Or(vec![nrnnf, lnnf]),
+                ])
+            }
             (true, FOF::All(x, f)) | (false, FOF::Ex(x, f)) => {
                 NNF::All(*x, Box::new(self.nnf(pol, f)))
             }

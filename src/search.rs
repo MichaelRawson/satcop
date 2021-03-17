@@ -1,6 +1,7 @@
 use crate::binding::Bindings;
 use crate::block::{Block, Id, Off};
 use crate::lpo;
+use crate::options::Options;
 use crate::sat;
 use crate::syntax::{Clause, Literal, Matrix, Term};
 use rand::rngs::SmallRng;
@@ -49,13 +50,13 @@ impl<'matrix> Search<'matrix> {
         }
     }
 
-    pub(crate) fn go(&mut self) -> bool {
+    pub(crate) fn go(&mut self, options: &Options) -> bool {
         if self.matrix.start.range().is_empty() {
             return false;
         }
         loop {
             for start in self.matrix.start.range() {
-                self.start(self.matrix.start[start]);
+                self.start(options, self.matrix.start[start]);
             }
             if self.solver.seen_new_clause() {
                 if !self.solver.solve() {
@@ -74,18 +75,22 @@ impl<'matrix> Search<'matrix> {
         self.solver.print_proof(w, self.matrix)
     }
 
-    fn start(&mut self, id: Id<Clause>) -> bool {
+    fn start(&mut self, options: &Options, id: Id<Clause>) -> bool {
         let cls = self.matrix.clauses[id];
         self.clauses.push(Off::new(id, 0));
         self.bindings.ensure_capacity(cls.vars);
-        self.solver
-            .assert(self.matrix, &self.bindings, &self.clauses);
+        self.solver.assert(
+            options,
+            self.matrix,
+            &self.bindings,
+            &self.clauses,
+        );
         self.offset = cls.vars.as_u32();
         let mut promises = cls.literals.into_iter().collect::<Vec<_>>();
         promises.shuffle(&mut self.rng);
         for id in promises {
             let lit = Off::new(id, 0);
-            if !self.prove(lit) {
+            if !self.prove(options, lit) {
                 self.bindings.clear();
                 self.clauses.clear();
                 return false;
@@ -96,7 +101,7 @@ impl<'matrix> Search<'matrix> {
         true
     }
 
-    fn prove(&mut self, goal: Off<Literal>) -> bool {
+    fn prove(&mut self, options: &Options, goal: Off<Literal>) -> bool {
         if self
             .solver
             .is_assigned_false(self.matrix, &self.bindings, goal)
@@ -145,6 +150,7 @@ impl<'matrix> Search<'matrix> {
                 ) && self.check_constraints()
                 {
                     self.solver.assert(
+                        options,
                         self.matrix,
                         &self.bindings,
                         &self.clauses,
@@ -190,8 +196,12 @@ impl<'matrix> Search<'matrix> {
                     self.bindings.undo_to_mark(save_bindings);
                     continue 'extensions;
                 }
-                self.solver
-                    .assert(self.matrix, &self.bindings, &self.clauses);
+                self.solver.assert(
+                    options,
+                    self.matrix,
+                    &self.bindings,
+                    &self.clauses,
+                );
                 let mut promises = cls
                     .literals
                     .into_iter()
@@ -200,7 +210,7 @@ impl<'matrix> Search<'matrix> {
                 promises.shuffle(&mut self.rng);
                 for id in promises {
                     let lit = Off::new(id, save_offset);
-                    if !self.prove(lit) {
+                    if !self.prove(options, lit) {
                         self.offset = save_offset;
                         self.clauses.truncate(save_clauses);
                         self.bindings.undo_to_mark(save_bindings);

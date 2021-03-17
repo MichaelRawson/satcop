@@ -2,6 +2,7 @@ use crate::binding::Bindings;
 use crate::block::{Block, BlockMap, Id, Off};
 use crate::cdcl;
 use crate::digest::{Digest, DigestMap, DigestSet};
+use crate::options::Options;
 use crate::syntax::*;
 use std::io::Write;
 
@@ -50,6 +51,7 @@ pub(crate) struct Solver {
 impl Solver {
     pub(crate) fn assert(
         &mut self,
+        options: &Options,
         matrix: &Matrix,
         bindings: &Bindings,
         clauses: &[Off<Clause>],
@@ -60,6 +62,7 @@ impl Solver {
                 let literal = self.literal(
                     matrix,
                     bindings,
+                    options.proof,
                     Off::new(literal, clause.offset),
                 );
                 if !self.scratch.contains(&literal) {
@@ -180,6 +183,7 @@ impl Solver {
         &mut self,
         matrix: &Matrix,
         bindings: &Bindings,
+        record: bool,
         lit: Off<Literal>,
     ) -> cdcl::Literal {
         let Literal { pol, atom } = matrix.literals[lit.id];
@@ -192,7 +196,7 @@ impl Solver {
             new = true;
             cdcl.fresh_atom()
         });
-        if new {
+        if new && record {
             let record = self.record(matrix, bindings, atom);
             self.atom_record.push(record);
         }

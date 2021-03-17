@@ -37,15 +37,17 @@ fn go(options: Arc<Options>) {
         std::process::exit(0);
     }
     let mut search = Search::new(&mut matrix);
-    if search.go() {
+    if search.go(&*options) {
         let stdout = stdout();
         let mut lock = stdout.lock();
         tstp::unsatisfiable(&mut lock, &options)
             .context("printing unsat")
             .unwrap_or_else(report_err);
-        tstp::print_proof(&mut lock, &options, &search)
-            .context("printing proof")
-            .unwrap_or_else(report_err);
+        if options.proof {
+            tstp::print_proof(&mut lock, &options, &search)
+                .context("printing proof")
+                .unwrap_or_else(report_err);
+        }
         std::process::exit(0);
     } else {
         let stdout = stdout();

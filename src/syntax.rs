@@ -13,8 +13,6 @@ pub(crate) enum Sort {
 
 pub(crate) struct Skolem;
 
-pub(crate) struct Definition;
-
 pub(crate) enum Name {
     Grounding,
     Equality,
@@ -23,7 +21,6 @@ pub(crate) enum Name {
     Number(String),
     Distinct(String),
     Skolem(Id<Skolem>),
-    Definition(Id<Definition>),
 }
 
 impl fmt::Display for Name {
@@ -35,14 +32,13 @@ impl fmt::Display for Name {
             Self::Quoted(quoted) => write!(f, "'{}'", quoted),
             Self::Distinct(distinct) => write!(f, "\"{}\"", distinct),
             Self::Skolem(n) => write!(f, "sK{}", n.as_u32()),
-            Self::Definition(n) => write!(f, "sP{}", n.as_u32()),
         }
     }
 }
 
 impl Name {
     pub(crate) fn needs_congruence(&self) -> bool {
-        !matches!(self, Name::Equality | Name::Definition(_))
+        !matches!(self, Name::Equality)
     }
 }
 
@@ -263,21 +259,6 @@ pub(crate) enum FOFTerm {
     Fun(Id<Symbol>, Vec<Rc<FOFTerm>>),
 }
 
-impl FOFTerm {
-    fn vars(&self, vars: &mut BlockMap<Var, bool>) {
-        match self {
-            Self::Var(x) => {
-                vars[*x] = true;
-            }
-            Self::Fun(_, ts) => {
-                for t in ts {
-                    t.vars(vars);
-                }
-            }
-        }
-    }
-}
-
 impl fmt::Debug for FOFTerm {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
@@ -292,17 +273,6 @@ impl fmt::Debug for FOFTerm {
 pub(crate) enum FOFAtom {
     Bool(bool),
     Pred(Rc<FOFTerm>),
-}
-
-impl FOFAtom {
-    pub(crate) fn vars(&self, vars: &mut BlockMap<Var, bool>) {
-        match self {
-            Self::Bool(_) => {}
-            Self::Pred(p) => {
-                p.vars(vars);
-            }
-        }
-    }
 }
 
 impl fmt::Debug for FOFAtom {
@@ -328,26 +298,6 @@ impl FOF {
     pub(crate) fn negated(self) -> Self {
         Self::Not(Box::new(self))
     }
-
-    pub(crate) fn vars(&self, vars: &mut BlockMap<Var, bool>) {
-        match self {
-            Self::Atom(atom) => {
-                atom.vars(vars);
-            }
-            Self::Not(f) | Self::All(_, f) | Self::Ex(_, f) => {
-                f.vars(vars);
-            }
-            Self::And(fs) | Self::Or(fs) => {
-                for f in fs {
-                    f.vars(vars);
-                }
-            }
-            Self::Eqv(l, r) => {
-                l.vars(vars);
-                r.vars(vars);
-            }
-        }
-    }
 }
 
 impl fmt::Debug for FOF {
@@ -370,6 +320,13 @@ pub(crate) struct NNFLiteral {
     pub(crate) atom: Rc<FOFTerm>,
 }
 
+impl NNFLiteral {
+    pub(crate) fn negated(mut self) -> Self {
+        self.pol = !self.pol;
+        self
+    }
+}
+
 impl fmt::Debug for NNFLiteral {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if !self.pol {
@@ -386,6 +343,22 @@ pub(crate) enum NNF {
     Or(Vec<NNF>),
     All(Id<Var>, Box<NNF>),
     Ex(Id<Var>, Box<NNF>),
+}
+
+impl NNF {
+    pub(crate) fn negated(&self) -> Self {
+        match self {
+            Self::Lit(lit) => Self::Lit(lit.clone().negated()),
+            Self::And(fs) => {
+                Self::Or(fs.iter().map(|f| f.negated()).collect())
+            }
+            Self::Or(fs) => {
+                Self::And(fs.iter().map(|f| f.negated()).collect())
+            }
+            Self::All(x, f) => Self::Ex(*x, Box::new(f.negated())),
+            Self::Ex(x, f) => Self::All(*x, Box::new(f.negated())),
+        }
+    }
 }
 
 pub(crate) struct CNF(pub(crate) Vec<NNFLiteral>);
