@@ -92,6 +92,10 @@ struct Loader {
 }
 
 impl Loader {
+    pub(crate) fn initialise(&mut self) {
+        self.pp.initialise();
+    }
+
     pub(crate) fn finish(self, options: &Options) -> syntax::Matrix {
         self.pp.finish(options)
     }
@@ -551,6 +555,7 @@ impl Dialect for cnf::Formula<'_> {
 
 pub(crate) fn load(options: &Options) -> anyhow::Result<syntax::Matrix> {
     let mut loader = Loader::default();
+    loader.initialise();
     loader
         .load(options, None, None, &options.path)
         .with_context(|| {

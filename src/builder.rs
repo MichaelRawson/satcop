@@ -1,4 +1,4 @@
-use crate::block::{BlockMap, Id, Range};
+use crate::block::{Block, BlockMap, Id, Range};
 use crate::digest::{Digest, DigestMap};
 use crate::options::Options;
 use crate::syntax::*;
@@ -7,43 +7,32 @@ use std::rc::Rc;
 
 pub(crate) const FALLBACK_GROUNDING: Id<Symbol> = Id::new(0);
 
+#[derive(Default)]
 pub(crate) struct Builder {
     matrix: Matrix,
     vars: BlockMap<Var, Id<Term>>,
     terms: DigestMap<Id<Term>>,
     goal_constants: FnvHashMap<Id<Symbol>, u32>,
+    goals: Block<Id<Clause>>,
+    positives: Block<Id<Clause>>,
     has_equality: bool,
+    has_non_goal: bool,
 }
 
-impl Default for Builder {
-    fn default() -> Self {
-        let matrix = Matrix::default();
-        let vars = BlockMap::default();
-        let terms = DigestMap::default();
-        let goal_constants = FnvHashMap::default();
-        let has_equality = false;
-        let mut result = Self {
-            matrix,
-            vars,
-            terms,
-            goal_constants,
-            has_equality,
-        };
-        result.new_symbol(Symbol {
+impl Builder {
+    pub(crate) fn initialise(&mut self) {
+        self.new_symbol(Symbol {
             arity: 0,
             sort: Sort::Obj,
             name: Name::Grounding,
         });
-        result.new_symbol(Symbol {
+        self.new_symbol(Symbol {
             arity: 2,
             sort: Sort::Bool,
             name: Name::Equality,
         });
-        result
     }
-}
 
-impl Builder {
     pub(crate) fn finish(mut self, options: &Options) -> Matrix {
         if self.has_equality {
             self.add_equality_axioms(options);
@@ -54,6 +43,12 @@ impl Builder {
             .max_by_key(|(_, count)| *count)
             .map(|(sym, _)| sym)
             .unwrap_or(FALLBACK_GROUNDING);
+        if self.goals.is_empty() || !self.has_non_goal {
+            self.matrix.start = self.positives;
+        }
+        else {
+            self.matrix.start = self.goals;
+        }
         self.matrix
     }
 
@@ -71,10 +66,8 @@ impl Builder {
         info: Info,
         constraints: bool,
     ) {
+        let positive = clause.0.iter().all(|lit| lit.pol);
         let id = self.matrix.clauses.len();
-        if clause.0.is_empty() || info.is_goal {
-            self.matrix.start.push(id);
-        }
         while vars > self.vars.len() {
             let var = self.vars.len();
             self.vars.push(self.matrix.terms.push(Term::var(var)));
@@ -126,12 +119,21 @@ impl Builder {
         }
         let oend = self.matrix.orderings.len();
         let orderings = Range::new(ostart, oend);
-        self.matrix.clauses.push(Clause {
+        let id = self.matrix.clauses.push(Clause {
             vars,
             literals,
             disequations,
             orderings,
         });
+        if positive {
+            self.positives.push(id);
+        }
+        if info.is_goal {
+            self.goals.push(id);
+        }
+        else {
+            self.has_non_goal = true;
+        }
         self.matrix.info.push(info);
     }
 

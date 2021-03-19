@@ -16,6 +16,10 @@ pub(crate) struct PP {
 }
 
 impl PP {
+    pub(crate) fn initialise(&mut self) {
+        self.builder.initialise();
+    }
+
     pub(crate) fn new_symbol(&mut self, sym: Symbol) -> Id<Symbol> {
         self.builder.new_symbol(sym)
     }
