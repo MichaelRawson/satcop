@@ -1,5 +1,6 @@
 use crate::block::{Block, BlockMap, Id, Range};
 use fnv::FnvHashSet;
+use std::collections::VecDeque;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Atom;
@@ -36,10 +37,11 @@ pub(crate) struct CDCL {
     fresh: Id<Atom>,
     pub(crate) literals: Block<Literal>,
     pub(crate) clauses: Block<Clause>,
+    last_clause: Id<Clause>,
     assignment: BlockMap<Atom, Option<bool>>,
     derivation: Block<Parent>,
     trail: Vec<Decision>,
-    propagating: Vec<Propagation>,
+    propagating: VecDeque<Propagation>,
     next: Id<Atom>,
     empty: Option<Id<Clause>>,
     units: Vec<Id<Clause>>,
@@ -60,7 +62,14 @@ impl CDCL {
     pub(crate) fn assert(&mut self, clause: &[Literal]) -> Id<Clause> {
         let start = self.literals.len();
         for literal in clause {
-            self.literals.push(*literal);
+            if self.assignment[literal.atom].is_none() {
+                self.literals.push(*literal);
+            }
+        }
+        for literal in clause {
+            if self.assignment[literal.atom].is_some() {
+                self.literals.push(*literal);
+            }
         }
         let end = self.literals.len();
         let literals = Range::new(start, end);
@@ -69,30 +78,59 @@ impl CDCL {
     }
 
     pub(crate) fn solve(&mut self) -> bool {
-        'restart: loop {
+        self.try_fixup();
+        self.last_clause = self.clauses.len();
+        'conflict: loop {
             if self.empty.is_some() {
                 return false;
-            }
-            self.trail.clear();
-            for id in self.assignment.range() {
-                self.assignment[id] = None;
-            }
-            self.next = Id::new(0);
-            for unit in &self.units {
-                let literal = self.clauses[*unit].literals.start;
-                self.propagating.push(Propagation {
-                    literal,
-                    reason: *unit,
-                });
             }
             loop {
                 if let Some(conflict) = self.propagate() {
                     self.analyze_conflict(conflict);
-                    continue 'restart;
+                    continue 'conflict;
                 }
                 if !self.tiebreak() {
                     return true;
                 }
+            }
+        }
+    }
+
+    fn try_fixup(&mut self) {
+        if self.empty.is_some() {
+            return;
+        }
+        for reason in Range::new(self.last_clause, self.clauses.len()) {
+            let clause = self.clauses[reason];
+            if !clause.literals.into_iter().any(|id| self.feasible(id)) {
+                self.propagating.clear();
+                self.analyze_conflict(reason);
+                return;
+            }
+            if clause
+                .literals
+                .into_iter()
+                .map(|id| self.literals[id])
+                .any(|lit| self.assignment[lit.atom] == Some(lit.pol))
+            {
+                continue;
+            }
+            let l1 = clause.literals.start;
+            let l2 = l1.offset(1);
+            if clause.literals.len() == 1 {
+                self.propagating.push_back(Propagation {
+                    literal: l1,
+                    reason,
+                });
+                continue;
+            }
+            if self.assignment[self.literals[l1].atom].is_none()
+                && self.assignment[self.literals[l2].atom].is_some()
+            {
+                self.propagating.push_back(Propagation {
+                    literal: l1,
+                    reason,
+                });
             }
         }
     }
@@ -124,19 +162,19 @@ impl CDCL {
 
     fn index(&mut self, clause: Clause) -> Id<Clause> {
         /*
-        print!("cnf({}, axiom, ", self.clauses.len().index);
-        if literals.is_empty() {
+        print!("cnf({}, axiom, ", self.clauses.len().as_u32());
+        if clause.literals.is_empty() {
             print!("$false");
         } else {
-            for id in literals {
-                if id != literals.start {
+            for id in clause.literals {
+                if id != clause.literals.start {
                     print!(" | ");
                 }
                 let Literal { pol, atom } = self.literals[id];
                 if !pol {
                     print!("~");
                 }
-                print!("p{}", atom.index);
+                print!("p{}", atom.as_u32());
             }
         }
         println!(").");
@@ -171,7 +209,7 @@ impl CDCL {
 
     fn propagate(&mut self) -> Option<Id<Clause>> {
         while let Some(Propagation { literal, reason }) =
-            self.propagating.pop()
+            self.propagating.pop_front()
         {
             let literal = self.literals[literal];
             if let Some(assigned) = self.assignment[literal.atom] {
@@ -193,45 +231,56 @@ impl CDCL {
             self.literals.push(self.literals[id]);
         }
         self.derivation.push(Parent(conflict));
+        let mut learned = false;
         while let Some(Decision { assignment, reason }) = self.trail.pop() {
             self.assignment[assignment.atom] = None;
             if let Some(reason) = reason {
-                if let Some(position) =
-                    Range::new(literal_start, self.literals.len())
-                        .into_iter()
-                        .find(|id| {
-                            self.literals[*id].atom == assignment.atom
-                                && self.literals[*id].pol != assignment.pol
-                        })
+                for position in Range::new(literal_start, self.literals.len())
                 {
-                    let resolvent = self.literals[position];
-                    if let Some(last) = self.literals.pop() {
-                        if position != self.literals.len() {
-                            self.literals[position] = last;
-                        }
-                    } else {
-                        unreachable!();
+                    let literal = self.literals[position];
+                    if literal.atom == assignment.atom
+                        && literal.pol != assignment.pol
+                    {
+                        self.resolve(literal_start, position, reason);
+                        learned = true;
+                        break;
                     }
-                    self.resolve(literal_start, resolvent, reason);
-                    self.derivation.push(Parent(reason));
                 }
             }
         }
-        self.index(Clause {
-            literals: Range::new(literal_start, self.literals.len()),
-            parents: Range::new(derivation_start, self.derivation.len()),
-        });
+        if learned {
+            let literals = Range::new(literal_start, self.literals.len());
+            let parents = Range::new(derivation_start, self.derivation.len());
+            self.index(Clause { literals, parents });
+        }
+        else {
+            self.literals.truncate(literal_start);
+            self.derivation.truncate(derivation_start);
+        }
+        self.next = Id::new(0);
+        for unit in &self.units {
+            let literal = self.clauses[*unit].literals.start;
+            self.propagating.push_back(Propagation {
+                literal,
+                reason: *unit,
+            });
+        }
     }
 
     fn resolve(
         &mut self,
         start: Id<Literal>,
-        on: Literal,
+        position: Id<Literal>,
         reason: Id<Clause>,
     ) {
+        let resolvent = self.literals[position];
+        let last = self.literals[self.literals.last()];
+        self.literals[position] = last;
+        self.literals.pop();
+
         for other in self.clauses[reason].literals {
             let other = self.literals[other];
-            if other.atom == on.atom {
+            if other.atom == resolvent.atom {
                 continue;
             }
             if Range::new(start, self.literals.len())
@@ -242,6 +291,7 @@ impl CDCL {
             }
             self.literals.push(other);
         }
+        self.derivation.push(Parent(reason));
     }
 
     fn tiebreak(&mut self) -> bool {
@@ -260,12 +310,12 @@ impl CDCL {
 
     fn assign(&mut self, assignment: Literal, reason: Option<Id<Clause>>) {
         self.trail.push(Decision { assignment, reason });
-        let Literal { atom, pol } = assignment;
-        self.assignment[atom] = Some(pol);
-        self.analyze_assignment(atom, pol);
+        self.assignment[assignment.atom] = Some(assignment.pol);
+        self.analyze_assignment(assignment);
     }
 
-    fn analyze_assignment(&mut self, atom: Id<Atom>, pol: bool) {
+    fn analyze_assignment(&mut self, assignment: Literal) {
+        let Literal { atom, pol } = assignment;
         let mut i = Id::new(0);
         for i in self.binary[atom][!pol as usize].range() {
             let id = self.binary[atom][!pol as usize][i];
@@ -278,7 +328,7 @@ impl CDCL {
                 l1
             };
             if self.assignment[self.literals[feasible].atom].is_none() {
-                self.propagating.push(Propagation {
+                self.propagating.push_back(Propagation {
                     literal: feasible,
                     reason: id,
                 });
@@ -298,13 +348,10 @@ impl CDCL {
                 if self.feasible(other) {
                     let new = self.literals[other];
                     let old = self.literals[assigned];
-                    if let Some(last) = self.watch[atom][!pol as usize].pop() {
-                        if i != self.watch[atom][!pol as usize].len() {
-                            self.watch[atom][!pol as usize][i] = last;
-                        }
-                    } else {
-                        unreachable!()
-                    }
+                    let last = self.watch[atom][!pol as usize]
+                        [self.watch[atom][!pol as usize].last()];
+                    self.watch[atom][!pol as usize][i] = last;
+                    self.watch[atom][!pol as usize].pop();
                     self.watch[new.atom][new.pol as usize].push(id);
                     self.literals[other] = old;
                     self.literals[assigned] = new;
@@ -312,7 +359,7 @@ impl CDCL {
                 }
             }
             if self.assignment[self.literals[feasible].atom].is_none() {
-                self.propagating.push(Propagation {
+                self.propagating.push_back(Propagation {
                     literal: feasible,
                     reason: id,
                 });

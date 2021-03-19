@@ -191,6 +191,12 @@ impl<T> Block<T> {
     }
 
     #[inline]
+    pub(crate) fn last(&self) -> Id<T> {
+        let last = self.0.len() - 1;
+        Id::new(last as u32)
+    }
+
+    #[inline]
     pub(crate) fn resize_with<F>(&mut self, max: Id<T>, f: F)
     where
         F: FnMut() -> T,
@@ -286,11 +292,6 @@ impl<K, V> BlockMap<K, V> {
     #[inline]
     pub(crate) fn len(&self) -> Id<K> {
         Id::new(self.block.len().index)
-    }
-
-    #[inline]
-    pub(crate) fn range(&self) -> Range<K> {
-        Range::new(Id::new(0), self.len())
     }
 
     #[inline]
