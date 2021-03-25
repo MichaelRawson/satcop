@@ -96,6 +96,31 @@ impl CDCL {
         }
     }
 
+    pub(crate) fn is_assigned_false(&self, literal: Literal) -> bool {
+        let Literal { atom, pol } = literal;
+        self.assignment[atom] == Some(!pol)
+    }
+
+    pub(crate) fn core(&self) -> Vec<Id<Clause>> {
+        let mut todo = vec![self.empty.unwrap()];
+        let mut core = vec![];
+        let mut done = FnvHashSet::default();
+        while let Some(next) = todo.pop() {
+            if done.insert(next) {
+                let parents = self.clauses[next].parents;
+                if parents.is_empty() {
+                    core.push(next);
+                } else {
+                    for parent in parents {
+                        todo.push(self.derivation[parent].0);
+                    }
+                }
+            }
+        }
+        core.sort();
+        core
+    }
+
     fn try_fixup(&mut self) {
         if self.empty.is_some() {
             return;
@@ -133,31 +158,6 @@ impl CDCL {
                 });
             }
         }
-    }
-
-    pub(crate) fn is_assigned_false(&self, literal: Literal) -> bool {
-        let Literal { atom, pol } = literal;
-        self.assignment[atom] == Some(!pol)
-    }
-
-    pub(crate) fn core(&self) -> Vec<Id<Clause>> {
-        let mut todo = vec![self.empty.unwrap()];
-        let mut core = vec![];
-        let mut done = FnvHashSet::default();
-        while let Some(next) = todo.pop() {
-            if done.insert(next) {
-                let parents = self.clauses[next].parents;
-                if parents.is_empty() {
-                    core.push(next);
-                } else {
-                    for parent in parents {
-                        todo.push(self.derivation[parent].0);
-                    }
-                }
-            }
-        }
-        core.sort();
-        core
     }
 
     fn index(&mut self, clause: Clause) -> Id<Clause> {
@@ -252,8 +252,7 @@ impl CDCL {
             let literals = Range::new(literal_start, self.literals.len());
             let parents = Range::new(derivation_start, self.derivation.len());
             self.index(Clause { literals, parents });
-        }
-        else {
+        } else {
             self.literals.truncate(literal_start);
             self.derivation.truncate(derivation_start);
         }

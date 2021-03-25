@@ -3,17 +3,11 @@ use crate::block::{Block, Id, Off};
 use crate::lpo;
 use crate::options::Options;
 use crate::sat;
-use crate::syntax::{Clause, Literal, Matrix, Term};
+use crate::syntax::{Clause, Literal, Matrix};
 use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
 use rand::SeedableRng;
 use std::io::Write;
-
-#[derive(Debug, Clone, Copy)]
-struct Constraint {
-    left: Off<Term>,
-    right: Off<Term>,
-}
 
 #[derive(Debug, Clone, Copy)]
 struct Path(Off<Literal>);
@@ -102,65 +96,78 @@ impl<'matrix> Search<'matrix> {
     }
 
     fn prove(&mut self, options: &Options, goal: Off<Literal>) -> bool {
+        let offset = goal.offset;
+        let Literal { pol, atom } = self.matrix.literals[goal.id];
+        let sym = self.matrix.terms[atom].as_sym();
+        let atom = Off::new(atom, offset);
+
+        // regularity
+        for pid in self.path.range() {
+            let Path(plit) = self.path[pid];
+            let ppol = self.matrix.literals[plit.id].pol;
+            let patom =
+                Off::new(self.matrix.literals[plit.id].atom, plit.offset);
+            let psym = self.matrix.terms[patom.id].as_sym();
+            if sym != psym || pol != ppol {
+                continue;
+            }
+            if self.bindings.equal(
+                &self.matrix.symbols,
+                &self.matrix.terms,
+                atom,
+                patom,
+            ) {
+                return false;
+            }
+        }
+
+        // model lemmata
         if self
             .solver
             .is_assigned_false(self.matrix, &self.bindings, goal)
         {
             return true;
         }
-
-        let offset = goal.offset;
-        let Literal { pol, atom } = self.matrix.literals[goal.id];
-        let sym = self.matrix.terms[atom].as_sym();
-        let atom = Off::new(atom, offset);
-
-        let save_bindings = self.bindings.mark();
-        // reductions
-        for pid in self.path.range() {
-            let Path(plit) = self.path[pid];
+        for id in self.path.range() {
+            let Path(plit) = self.path[id];
             if self
                 .solver
                 .is_assigned_false(self.matrix, &self.bindings, plit)
             {
                 return true;
             }
+        }
+
+        let save_bindings = self.bindings.mark();
+        // reductions
+        for pid in self.path.range() {
+            let Path(plit) = self.path[pid];
             let ppol = self.matrix.literals[plit.id].pol;
             let patom =
                 Off::new(self.matrix.literals[plit.id].atom, plit.offset);
             let psym = self.matrix.terms[patom.id].as_sym();
-
-            if sym != psym {
+            if sym != psym || pol == ppol {
                 continue;
             }
-            if pol == ppol {
-                if self.bindings.equal(
-                    &self.matrix.symbols,
-                    &self.matrix.terms,
-                    atom,
-                    patom,
-                ) {
-                    return false;
-                }
-            } else {
-                if self.bindings.unify(
-                    &self.matrix.symbols,
-                    &self.matrix.terms,
-                    atom,
-                    patom,
-                ) && self.check_constraints()
-                {
-                    self.solver.assert(
-                        options,
-                        self.matrix,
-                        &self.bindings,
-                        &self.clauses,
-                    );
-                    return true;
-                }
-                self.bindings.undo_to_mark(save_bindings);
+            if self.bindings.unify(
+                &self.matrix.symbols,
+                &self.matrix.terms,
+                atom,
+                patom,
+            ) && self.check_constraints()
+            {
+                self.solver.assert(
+                    options,
+                    self.matrix,
+                    &self.bindings,
+                    &self.clauses,
+                );
+                return true;
             }
+            self.bindings.undo_to_mark(save_bindings);
         }
 
+        // depth limit
         if self.depth_limit <= self.path.len() {
             return false;
         }
