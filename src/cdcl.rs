@@ -1,4 +1,5 @@
 use crate::block::{Block, BlockMap, Id, Range};
+use crate::statistics::Statistics;
 use fnv::FnvHashSet;
 use std::collections::VecDeque;
 
@@ -77,8 +78,8 @@ impl CDCL {
         self.index(Clause { literals, parents })
     }
 
-    pub(crate) fn solve(&mut self) -> bool {
-        self.try_fixup();
+    pub(crate) fn solve(&mut self, statistics: &mut Statistics) -> bool {
+        self.try_fixup(statistics);
         self.last_clause = self.clauses.len();
         'conflict: loop {
             if self.empty.is_some() {
@@ -86,7 +87,7 @@ impl CDCL {
             }
             loop {
                 if let Some(conflict) = self.propagate() {
-                    self.analyze_conflict(conflict);
+                    self.analyze_conflict(statistics, conflict);
                     continue 'conflict;
                 }
                 if !self.tiebreak() {
@@ -121,7 +122,7 @@ impl CDCL {
         core
     }
 
-    fn try_fixup(&mut self) {
+    fn try_fixup(&mut self, statistics: &mut Statistics) {
         if self.empty.is_some() {
             return;
         }
@@ -129,7 +130,7 @@ impl CDCL {
             let clause = self.clauses[reason];
             if !clause.literals.into_iter().any(|id| self.feasible(id)) {
                 self.propagating.clear();
-                self.analyze_conflict(reason);
+                self.analyze_conflict(statistics, reason);
                 return;
             }
             if clause
@@ -224,7 +225,11 @@ impl CDCL {
         None
     }
 
-    fn analyze_conflict(&mut self, conflict: Id<Clause>) {
+    fn analyze_conflict(
+        &mut self,
+        statistics: &mut Statistics,
+        conflict: Id<Clause>,
+    ) {
         let literal_start = self.literals.len();
         let derivation_start = self.derivation.len();
         for id in self.clauses[conflict].literals {
@@ -249,6 +254,7 @@ impl CDCL {
             }
         }
         if learned {
+            statistics.learned_clauses += 1;
             let literals = Range::new(literal_start, self.literals.len());
             let parents = Range::new(derivation_start, self.derivation.len());
             self.index(Clause { literals, parents });

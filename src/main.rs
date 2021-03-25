@@ -9,6 +9,7 @@ mod options;
 mod pp;
 mod sat;
 mod search;
+mod statistics;
 mod syntax;
 mod tptp;
 mod tstp;
@@ -46,6 +47,12 @@ fn go(options: Arc<Options>) {
         if options.proof {
             tstp::print_proof(&mut lock, &options, &search)
                 .context("printing proof")
+                .unwrap_or_else(report_err);
+        }
+        if options.statistics {
+            search
+                .print_statistics(&mut lock)
+                .context("printing statistics")
                 .unwrap_or_else(report_err);
         }
         std::process::exit(0);

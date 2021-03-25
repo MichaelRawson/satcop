@@ -3,6 +3,7 @@ use crate::block::{Block, Id, Off};
 use crate::lpo;
 use crate::options::Options;
 use crate::sat;
+use crate::statistics::Statistics;
 use crate::syntax::{Clause, Literal, Matrix};
 use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
@@ -14,6 +15,7 @@ struct Path(Off<Literal>);
 
 pub(crate) struct Search<'matrix> {
     matrix: &'matrix mut Matrix,
+    statistics: Statistics,
     rng: SmallRng,
     solver: sat::Solver,
     bindings: Bindings,
@@ -25,6 +27,12 @@ pub(crate) struct Search<'matrix> {
 
 impl<'matrix> Search<'matrix> {
     pub(crate) fn new(matrix: &'matrix mut Matrix) -> Self {
+        let statistics = Statistics {
+            symbols: matrix.symbols.len().as_u32() - 2,
+            clauses: matrix.clauses.len().as_u32(),
+            start_clauses: matrix.start.range().len(),
+            ..Default::default()
+        };
         let rng = SmallRng::seed_from_u64(0);
         let solver = sat::Solver::default();
         let bindings = Bindings::default();
@@ -34,6 +42,7 @@ impl<'matrix> Search<'matrix> {
         let offset = 0;
         Self {
             matrix,
+            statistics,
             rng,
             solver,
             bindings,
@@ -45,21 +54,31 @@ impl<'matrix> Search<'matrix> {
     }
 
     pub(crate) fn go(&mut self, options: &Options) -> bool {
-        if self.matrix.start.range().is_empty() {
+        let start_clauses = self.matrix.start.range();
+        if start_clauses.is_empty() {
             return false;
         }
         loop {
-            for start in self.matrix.start.range() {
+            self.statistics.iterative_deepening_steps += 1;
+            for start in start_clauses {
                 self.start(options, self.matrix.start[start]);
             }
             if self.solver.seen_new_clause() {
-                if !self.solver.solve() {
+                if !self.solver.solve(&mut self.statistics) {
                     return true;
                 }
             } else {
                 self.depth_limit.increment();
+                self.statistics.maximum_path_limit = self.depth_limit.as_u32();
             }
         }
+    }
+
+    pub(crate) fn print_statistics<W: Write>(
+        &self,
+        w: &mut W,
+    ) -> anyhow::Result<()> {
+        self.statistics.print(w)
     }
 
     pub(crate) fn print_proof<W: Write>(
@@ -74,6 +93,7 @@ impl<'matrix> Search<'matrix> {
         self.clauses.push(Off::new(id, 0));
         self.bindings.ensure_capacity(cls.vars);
         self.solver.assert(
+            &mut self.statistics,
             options,
             self.matrix,
             &self.bindings,
@@ -96,6 +116,7 @@ impl<'matrix> Search<'matrix> {
     }
 
     fn prove(&mut self, options: &Options, goal: Off<Literal>) -> bool {
+        self.statistics.literal_attempts += 1;
         let offset = goal.offset;
         let Literal { pol, atom } = self.matrix.literals[goal.id];
         let sym = self.matrix.terms[atom].as_sym();
@@ -117,6 +138,7 @@ impl<'matrix> Search<'matrix> {
                 atom,
                 patom,
             ) {
+                self.statistics.regularity_failures += 1;
                 return false;
             }
         }
@@ -126,6 +148,7 @@ impl<'matrix> Search<'matrix> {
             .solver
             .is_assigned_false(self.matrix, &self.bindings, goal)
         {
+            self.statistics.goals_assigned_false += 1;
             return true;
         }
         for id in self.path.range() {
@@ -134,6 +157,7 @@ impl<'matrix> Search<'matrix> {
                 .solver
                 .is_assigned_false(self.matrix, &self.bindings, plit)
             {
+                self.statistics.paths_assigned_false += 1;
                 return true;
             }
         }
@@ -156,7 +180,9 @@ impl<'matrix> Search<'matrix> {
                 patom,
             ) && self.check_constraints()
             {
+                self.statistics.reductions += 1;
                 self.solver.assert(
+                    &mut self.statistics,
                     options,
                     self.matrix,
                     &self.bindings,
@@ -169,6 +195,7 @@ impl<'matrix> Search<'matrix> {
 
         // depth limit
         if self.depth_limit <= self.path.len() {
+            self.statistics.depth_failures += 1;
             return false;
         }
 
@@ -195,6 +222,7 @@ impl<'matrix> Search<'matrix> {
                 atom,
                 Off::new(self.matrix.literals[pos.lit].atom, self.offset),
             ) {
+                self.statistics.extensions += 1;
                 self.clauses.push(Off::new(pos.cls, self.offset));
                 self.offset += cls.vars.as_u32();
                 if !self.check_constraints() {
@@ -204,6 +232,7 @@ impl<'matrix> Search<'matrix> {
                     continue 'extensions;
                 }
                 self.solver.assert(
+                    &mut self.statistics,
                     options,
                     self.matrix,
                     &self.bindings,
@@ -244,6 +273,7 @@ impl<'matrix> Search<'matrix> {
                     Off::new(diseq.left, cls.offset),
                     Off::new(diseq.right, cls.offset),
                 ) {
+                    self.statistics.tautology_failures += 1;
                     return false;
                 }
             }
@@ -270,6 +300,7 @@ impl<'matrix> Search<'matrix> {
                 println!("\t{:?}", comparison);
                 */
                 if matches!(comparison, Some(Less)) {
+                    self.statistics.ordering_failures += 1;
                     return false;
                 }
             }

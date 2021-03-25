@@ -3,6 +3,7 @@ use crate::block::{Block, BlockMap, Id, Off};
 use crate::cdcl;
 use crate::digest::{Digest, DigestMap, DigestSet};
 use crate::options::Options;
+use crate::statistics::Statistics;
 use crate::syntax::*;
 use std::io::Write;
 
@@ -51,6 +52,7 @@ pub(crate) struct Solver {
 impl Solver {
     pub(crate) fn assert(
         &mut self,
+        statistics: &mut Statistics,
         options: &Options,
         matrix: &Matrix,
         bindings: &Bindings,
@@ -60,6 +62,7 @@ impl Solver {
             let mut digest = Digest::default();
             for literal in matrix.clauses[clause.id].literals {
                 let literal = self.literal(
+                    statistics,
                     matrix,
                     bindings,
                     options.proof,
@@ -76,6 +79,7 @@ impl Solver {
                 }
             }
             if self.cache.insert(digest) {
+                statistics.sat_clauses += 1;
                 let new = self.cdcl.assert(&self.scratch);
                 self.origins.resize_with(new.offset(1), Id::default);
                 self.origins[new] = clause.id;
@@ -85,8 +89,8 @@ impl Solver {
         }
     }
 
-    pub(crate) fn solve(&mut self) -> bool {
-        self.cdcl.solve()
+    pub(crate) fn solve(&mut self, statistics: &mut Statistics) -> bool {
+        self.cdcl.solve(statistics)
     }
 
     pub(crate) fn seen_new_clause(&mut self) -> bool {
@@ -181,6 +185,7 @@ impl Solver {
 
     fn literal(
         &mut self,
+        statistics: &mut Statistics,
         matrix: &Matrix,
         bindings: &Bindings,
         record: bool,
@@ -193,6 +198,7 @@ impl Solver {
         let cdcl = &mut self.cdcl;
         let mut new = false;
         let sat = *self.atoms.entry(digest).or_insert_with(|| {
+            statistics.sat_variables += 1;
             new = true;
             cdcl.fresh_atom()
         });
