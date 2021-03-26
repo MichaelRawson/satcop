@@ -1,4 +1,4 @@
-use crate::block::{Block, BlockMap, Id, Range};
+use crate::block::{BlockMap, Id, Range};
 use crate::digest::{Digest, DigestMap};
 use crate::options::Options;
 use crate::syntax::*;
@@ -13,8 +13,8 @@ pub(crate) struct Builder {
     vars: BlockMap<Var, Id<Term>>,
     terms: DigestMap<Id<Term>>,
     goal_constants: FnvHashMap<Id<Symbol>, u32>,
-    goals: Block<Id<Clause>>,
-    positives: Block<Id<Clause>>,
+    goals: Vec<Id<Clause>>,
+    positives: Vec<Id<Clause>>,
     has_equality: bool,
     has_non_goal: bool,
 }
@@ -45,8 +45,7 @@ impl Builder {
             .unwrap_or(FALLBACK_GROUNDING);
         if self.goals.is_empty() || !self.has_non_goal {
             self.matrix.start = self.positives;
-        }
-        else {
+        } else {
             self.matrix.start = self.goals;
         }
         self.matrix
@@ -130,8 +129,7 @@ impl Builder {
         }
         if info.is_goal {
             self.goals.push(id);
-        }
-        else {
+        } else {
             self.has_non_goal = true;
         }
         self.matrix.info.push(info);

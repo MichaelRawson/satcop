@@ -29,7 +29,7 @@ fn report_err<T>(err: anyhow::Error) -> T {
 }
 
 fn go(options: Arc<Options>) {
-    let mut matrix = tptp::load(&options).unwrap_or_else(|err| {
+    let matrix = tptp::load(&options).unwrap_or_else(|err| {
         tstp::load_error(&err);
         report_err(err)
     });
@@ -37,15 +37,15 @@ fn go(options: Arc<Options>) {
         matrix.print_cnf();
         std::process::exit(0);
     }
-    let mut search = Search::new(&mut matrix);
-    if search.go(&*options) {
+    let mut search = Search::default();
+    if search.go(&*options, &matrix) {
         let stdout = stdout();
         let mut lock = stdout.lock();
         tstp::unsatisfiable(&mut lock, &options)
             .context("printing unsat")
             .unwrap_or_else(report_err);
         if options.proof {
-            tstp::print_proof(&mut lock, &options, &search)
+            tstp::print_proof(&mut lock, &options, &matrix, &search)
                 .context("printing proof")
                 .unwrap_or_else(report_err);
         }

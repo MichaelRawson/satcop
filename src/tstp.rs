@@ -1,5 +1,6 @@
 use crate::options::Options;
 use crate::search::Search;
+use crate::syntax::Matrix;
 use crate::tptp::{SyntaxError, Unsupported};
 use std::io::Write;
 
@@ -51,11 +52,12 @@ pub(crate) fn unsatisfiable<W: Write>(
 pub(crate) fn print_proof<W: Write>(
     w: &mut W,
     options: &Options,
+    matrix: &Matrix,
     search: &Search,
 ) -> anyhow::Result<()> {
     let name = get_problem_name(options);
     writeln!(w, "% SZS output begin Proof for {}", name)?;
-    search.print_proof(w)?;
+    search.print_proof(w, matrix)?;
     writeln!(w, "% SZS output end Proof for {}", name)?;
     Ok(())
 }

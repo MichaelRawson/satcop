@@ -158,7 +158,7 @@ pub(crate) struct Matrix {
     pub(crate) orderings: Block<Ordering>,
     pub(crate) clauses: Block<Clause>,
     pub(crate) info: BlockMap<Clause, Info>,
-    pub(crate) start: Block<Id<Clause>>,
+    pub(crate) start: Vec<Id<Clause>>,
     pub(crate) index: BlockMap<Symbol, [Vec<Position>; 2]>,
     pub(crate) grounding_constant: Id<Symbol>,
 }

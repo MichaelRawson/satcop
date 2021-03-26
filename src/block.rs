@@ -185,11 +185,6 @@ pub(crate) struct Block<T>(Vec<T>);
 
 impl<T> Block<T> {
     #[inline]
-    pub(crate) fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
-    #[inline]
     pub(crate) fn len(&self) -> Id<T> {
         let len = self.0.len();
         Id::new(len as u32)
