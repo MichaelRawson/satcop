@@ -35,6 +35,9 @@ pub(crate) struct Search {
 
 impl Search {
     pub(crate) fn go(&mut self, options: &Options, matrix: &Matrix) -> bool {
+        self.statistics.symbols = matrix.symbols.len().as_u32();
+        self.statistics.clauses = matrix.clauses.len().as_u32();
+        self.statistics.start_clauses = matrix.start.len() as u32;
         if matrix.start.is_empty() {
             return false;
         }
