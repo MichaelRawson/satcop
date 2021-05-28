@@ -117,18 +117,11 @@ pub(crate) struct Disequation {
     pub(crate) right: Id<Term>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct Ordering {
-    pub(crate) left: Id<Term>,
-    pub(crate) right: Id<Term>,
-}
-
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Clause {
     pub(crate) vars: Id<Var>,
     pub(crate) literals: Range<Literal>,
     pub(crate) disequations: Range<Disequation>,
-    pub(crate) orderings: Range<Ordering>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -155,7 +148,6 @@ pub(crate) struct Matrix {
     pub(crate) terms: Block<Term>,
     pub(crate) literals: Block<Literal>,
     pub(crate) disequations: Block<Disequation>,
-    pub(crate) orderings: Block<Ordering>,
     pub(crate) clauses: Block<Clause>,
     pub(crate) info: BlockMap<Clause, Info>,
     pub(crate) start: Vec<Id<Clause>>,
@@ -195,16 +187,6 @@ impl Matrix {
                 let Disequation { left, right } = self.disequations[id];
                 self.print_term(&bindings, Off::new(left, 0));
                 print!(" != ");
-                self.print_term(&bindings, Off::new(right, 0));
-            }
-            for id in clause.orderings {
-                if sep {
-                    print!(", ");
-                }
-                sep = true;
-                let Ordering { left, right } = self.orderings[id];
-                self.print_term(&bindings, Off::new(left, 0));
-                print!(" >= ");
                 self.print_term(&bindings, Off::new(right, 0));
             }
             println!();

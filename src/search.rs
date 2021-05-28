@@ -1,6 +1,5 @@
 use crate::binding::Bindings;
 use crate::block::{Block, Id, Off};
-use crate::lpo;
 use crate::options::Options;
 use crate::sat;
 use crate::statistics::Statistics;
@@ -256,33 +255,6 @@ impl Search {
                     Off::new(diseq.right, cls.offset),
                 ) {
                     self.statistics.tautology_failures += 1;
-                    return false;
-                }
-            }
-            let orderings = matrix.clauses[cls.id].orderings;
-            for ordering in &matrix.orderings[orderings] {
-                use std::cmp::Ordering::Less;
-                let comparison = lpo::cmp(
-                    &matrix.symbols,
-                    &matrix.terms,
-                    &self.bindings,
-                    Off::new(ordering.left, cls.offset),
-                    Off::new(ordering.right, cls.offset),
-                );
-                /*
-                self.matrix.print_term(
-                    &self.bindings,
-                    Off::new(ordering.left, cls.offset),
-                );
-                print!("\t");
-                self.matrix.print_term(
-                    &self.bindings,
-                    Off::new(ordering.right, cls.offset),
-                );
-                println!("\t{:?}", comparison);
-                */
-                if matches!(comparison, Some(Less)) {
-                    self.statistics.ordering_failures += 1;
                     return false;
                 }
             }

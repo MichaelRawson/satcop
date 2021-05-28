@@ -15,9 +15,6 @@ pub(crate) struct Options {
     #[clap(long, about = "Print normal form and exit")]
     pub(crate) clausify: bool,
 
-    #[clap(long, about = "Apply constrained equality elimination")]
-    pub(crate) cee: bool,
-
     #[clap(long, about = "Print search statistcs")]
     pub(crate) statistics: bool,
 

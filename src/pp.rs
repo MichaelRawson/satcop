@@ -1,7 +1,5 @@
 use crate::block::{BlockMap, Id};
 use crate::builder::Builder;
-use crate::cee;
-use crate::options::Options;
 use crate::syntax::*;
 use std::rc::Rc;
 
@@ -26,7 +24,6 @@ impl PP {
 
     pub(crate) fn process(
         &mut self,
-        opts: &Options,
         formula: FOF,
         is_goal: bool,
         source: Source,
@@ -35,56 +32,18 @@ impl PP {
         self.subst.clear();
         self.subst.resize_with(max_var, Option::default);
         let nnf = self.nnf(true, &formula);
-        self.clausify(opts, nnf, is_goal, &source);
+        self.clausify(nnf, is_goal, &source);
     }
 
-    pub(crate) fn finish(self, opts: &Options) -> Matrix {
-        self.builder.finish(opts)
+    pub(crate) fn finish(self) -> Matrix {
+        self.builder.finish()
     }
 
-    fn clausify(
-        &mut self,
-        opts: &Options,
-        nnf: NNF,
-        is_goal: bool,
-        source: &Source,
-    ) {
+    fn clausify(&mut self, nnf: NNF, is_goal: bool, source: &Source) {
         for mut clause in self.cnf(nnf) {
-            if opts.cee {
-                self.cee(clause, is_goal, &source);
-            } else {
-                self.rename_clause(self.subst.len(), &mut clause);
-                self.builder.clause(
-                    clause,
-                    vec![],
-                    self.fresh_rename,
-                    Info {
-                        is_goal,
-                        source: source.clone(),
-                    },
-                    true,
-                );
-            }
-        }
-    }
-
-    fn cee(&mut self, mut clause: CNF, is_goal: bool, source: &Source) {
-        let mut fresh = self.subst.len();
-        cee::monotonicity(&mut fresh, &mut clause);
-        cee::reflexivity(&mut clause);
-        for mut clause in cee::symmetry(&clause) {
-            let mut fresh2 = fresh;
-            let orderings = cee::transitivity(&mut fresh2, &mut clause);
-            self.rename_clause(fresh2, &mut clause);
-            let orderings = orderings
-                .into_iter()
-                .map(|(left, right)| {
-                    (self.rename_term(&left), self.rename_term(&right))
-                })
-                .collect();
+            self.rename_clause(self.subst.len(), &mut clause);
             self.builder.clause(
                 clause,
-                orderings,
                 self.fresh_rename,
                 Info {
                     is_goal,

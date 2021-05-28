@@ -96,8 +96,8 @@ impl Loader {
         self.pp.initialise();
     }
 
-    pub(crate) fn finish(self, options: &Options) -> syntax::Matrix {
-        self.pp.finish(options)
+    pub(crate) fn finish(self) -> syntax::Matrix {
+        self.pp.finish()
     }
 
     fn defined_term(
@@ -454,7 +454,6 @@ impl Loader {
 
     fn annotated<D: Dialect>(
         &mut self,
-        options: &Options,
         selection: Option<&FnvHashSet<Name>>,
         path: Rc<str>,
         annotated: Annotated<D>,
@@ -480,8 +479,7 @@ impl Loader {
         if negate {
             formula = formula.negated();
         }
-        self.pp
-            .process(options, formula, is_goal, source, self.fresh);
+        self.pp.process(formula, is_goal, source, self.fresh);
         Ok(())
     }
 
@@ -503,7 +501,6 @@ impl Loader {
                 TPTPInput::Annotated(annotated) => match *annotated {
                     AnnotatedFormula::Fof(fof) => {
                         self.annotated(
-                            options,
                             selection.as_ref(),
                             display_path.clone(),
                             fof.0,
@@ -511,7 +508,6 @@ impl Loader {
                     }
                     AnnotatedFormula::Cnf(cnf) => {
                         self.annotated(
-                            options,
                             selection.as_ref(),
                             display_path.clone(),
                             cnf.0,
@@ -561,5 +557,5 @@ pub(crate) fn load(options: &Options) -> anyhow::Result<syntax::Matrix> {
         .with_context(|| {
             format!("failed to load from '{}'", options.path.display())
         })?;
-    Ok(loader.finish(options))
+    Ok(loader.finish())
 }

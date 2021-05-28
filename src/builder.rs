@@ -1,6 +1,5 @@
 use crate::block::{BlockMap, Id, Range};
 use crate::digest::{Digest, DigestMap};
-use crate::options::Options;
 use crate::syntax::*;
 use fnv::{FnvHashMap, FnvHashSet};
 use std::rc::Rc;
@@ -33,9 +32,9 @@ impl Builder {
         });
     }
 
-    pub(crate) fn finish(mut self, options: &Options) -> Matrix {
+    pub(crate) fn finish(mut self) -> Matrix {
         if self.has_equality {
-            self.add_equality_axioms(options);
+            self.add_equality_axioms();
         }
         self.matrix.grounding_constant = self
             .goal_constants
@@ -60,7 +59,6 @@ impl Builder {
     pub(crate) fn clause(
         &mut self,
         clause: CNF,
-        orderings: Vec<(Rc<FOFTerm>, Rc<FOFTerm>)>,
         vars: Id<Var>,
         info: Info,
         constraints: bool,
@@ -110,19 +108,10 @@ impl Builder {
         }
         let dstop = self.matrix.disequations.len();
         let disequations = Range::new(dstart, dstop);
-        let ostart = self.matrix.orderings.len();
-        for (left, right) in orderings {
-            let left = self.term(false, &left);
-            let right = self.term(false, &right);
-            self.matrix.orderings.push(Ordering { left, right });
-        }
-        let oend = self.matrix.orderings.len();
-        let orderings = Range::new(ostart, oend);
         let id = self.matrix.clauses.push(Clause {
             vars,
             literals,
             disequations,
-            orderings,
         });
         if positive {
             self.positives.push(id);
@@ -275,7 +264,7 @@ impl Builder {
         }
     }
 
-    fn add_equality_axioms(&mut self, options: &Options) {
+    fn add_equality_axioms(&mut self) {
         let info = Info {
             is_goal: false,
             source: Source::Equality,
@@ -290,14 +279,10 @@ impl Builder {
                     vec![v0.clone(), v0.clone()],
                 )),
             }]),
-            vec![],
             Id::new(1),
             info.clone(),
             false,
         );
-        if options.cee {
-            return;
-        }
         let v2 = Rc::new(FOFTerm::Var(Id::new(2)));
         self.clause(
             CNF(vec![
@@ -316,7 +301,6 @@ impl Builder {
                     )),
                 },
             ]),
-            vec![],
             Id::new(2),
             info.clone(),
             true,
@@ -342,7 +326,6 @@ impl Builder {
                     atom: Rc::new(FOFTerm::Fun(EQUALITY, vec![v0, v2])),
                 },
             ]),
-            vec![],
             Id::new(3),
             info.clone(),
             true,
@@ -393,13 +376,7 @@ impl Builder {
                     });
                 }
             }
-            self.clause(
-                CNF(lits),
-                vec![],
-                Id::new(arity * 2),
-                info.clone(),
-                true,
-            );
+            self.clause(CNF(lits), Id::new(arity * 2), info.clone(), true);
         }
     }
 }
