@@ -17,7 +17,6 @@ pub(crate) struct Statistics {
     pub(crate) extensions: u32,
     pub(crate) sat_variables: u32,
     pub(crate) sat_clauses: u32,
-    pub(crate) learned_clauses: u32,
 }
 
 impl Statistics {
@@ -49,7 +48,6 @@ impl Statistics {
         writeln!(w, "% extensions: {}", self.extensions)?;
         writeln!(w, "% SAT variables: {}", self.sat_variables)?;
         writeln!(w, "% SAT clauses: {}", self.sat_clauses)?;
-        writeln!(w, "% learned clauses: {}", self.learned_clauses)?;
         Ok(())
     }
 }

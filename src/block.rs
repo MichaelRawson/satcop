@@ -111,11 +111,6 @@ impl<T> Range<T> {
     pub(crate) fn is_empty(&self) -> bool {
         self.start == self.stop
     }
-
-    #[inline]
-    pub(crate) fn len(&self) -> u32 {
-        self.stop.index - self.start.index
-    }
 }
 
 impl<T> Clone for Range<T> {
@@ -188,12 +183,6 @@ impl<T> Block<T> {
     pub(crate) fn len(&self) -> Id<T> {
         let len = self.0.len();
         Id::new(len as u32)
-    }
-
-    #[inline]
-    pub(crate) fn last(&self) -> Id<T> {
-        let last = self.0.len() - 1;
-        Id::new(last as u32)
     }
 
     #[inline]

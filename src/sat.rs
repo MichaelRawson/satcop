@@ -1,11 +1,99 @@
 use crate::binding::Bindings;
-use crate::block::{Block, BlockMap, Id, Off};
-use crate::cdcl;
+use crate::block::{Block, BlockMap, Id, Off, Range};
 use crate::digest::{Digest, DigestMap, DigestSet};
-use crate::options::Options;
 use crate::statistics::Statistics;
 use crate::syntax::*;
 use std::io::Write;
+use std::os::raw::c_int;
+
+const PICOSAT_UNSATISFIABLE: c_int = 20;
+
+#[repr(C)]
+struct PicoSAT {
+    _unused: [u8; 0],
+}
+
+#[link(name = "picosat")]
+extern "C" {
+    fn picosat_init() -> *mut PicoSAT;
+    fn picosat_enable_trace_generation(sat: *mut PicoSAT) -> c_int;
+    fn picosat_add(sat: *mut PicoSAT, lit: c_int) -> c_int;
+    fn picosat_sat(sat: *mut PicoSAT, limit: c_int) -> c_int;
+    fn picosat_deref(sat: *mut PicoSAT, lit: c_int) -> c_int;
+    fn picosat_added_original_clauses(sat: *mut PicoSAT) -> c_int;
+    fn picosat_coreclause(sat: *mut PicoSAT, i: c_int) -> c_int;
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SATVar;
+
+#[derive(Debug, Clone, Copy)]
+struct SATLit(i32);
+
+impl SATLit {
+    fn new(pol: bool, var: Id<SATVar>) -> Self {
+        let mut lit = var.as_u32() as i32 + 1;
+        if !pol {
+            lit = -lit;
+        }
+        Self(lit)
+    }
+
+    fn pol(self) -> bool {
+        self.0 > 0
+    }
+
+    fn var(self) -> Id<SATVar> {
+        Id::new(self.0.abs() as u32 - 1)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SATCls;
+
+struct Pico(*mut PicoSAT);
+
+impl Default for Pico {
+    fn default() -> Self {
+        let sat = unsafe { picosat_init() };
+        Self(sat)
+    }
+}
+
+impl Pico {
+    fn enable_traces(&mut self) {
+        assert!(unsafe { picosat_enable_trace_generation(self.0) } != 0);
+    }
+
+    fn assert(&mut self, clause: &[SATLit]) {
+        for lit in clause {
+            let lit = lit.0 as c_int;
+            unsafe { picosat_add(self.0, lit) };
+        }
+        unsafe { picosat_add(self.0, 0) };
+    }
+
+    fn solve(&mut self) -> bool {
+        let result = unsafe { picosat_sat(self.0, -1) };
+        result != PICOSAT_UNSATISFIABLE
+    }
+
+    fn assignment(&self, var: Id<SATVar>) -> bool {
+        let lit = SATLit::new(true, var);
+        let assignment = unsafe { picosat_deref(self.0, lit.0 as c_int) };
+        assignment == 1
+    }
+
+    fn core(&self) -> Vec<Id<SATCls>> {
+        let mut core = vec![];
+        for i in 0..unsafe { picosat_added_original_clauses(self.0) } {
+            if unsafe { picosat_coreclause(self.0, i) } != 0 {
+                core.push(Id::new(i as u32));
+            }
+        }
+        core
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 struct Record(u32);
@@ -38,22 +126,31 @@ impl Record {
 
 #[derive(Default)]
 pub(crate) struct Solver {
-    cdcl: cdcl::CDCL,
-    scratch: Vec<cdcl::Literal>,
-    atoms: DigestMap<Id<cdcl::Atom>>,
+    pico: Pico,
+    assignment: BlockMap<SATVar, bool>,
+    scratch: Vec<SATLit>,
+    atoms: DigestMap<Id<SATVar>>,
     cache: DigestSet,
+    fresh: Id<SATVar>,
     new_clause: bool,
-    origins: BlockMap<cdcl::Clause, Id<Clause>>,
+    record: bool,
+    origins: BlockMap<SATCls, Id<Clause>>,
+    record_clauses: BlockMap<SATCls, Range<SATLit>>,
+    record_literals: Block<SATLit>,
     record_terms: Block<Record>,
     record_cache: DigestMap<Id<Record>>,
-    atom_record: BlockMap<cdcl::Atom, Id<Record>>,
+    atom_record: BlockMap<SATVar, Id<Record>>,
 }
 
 impl Solver {
+    pub(crate) fn record_proof(&mut self) {
+        self.pico.enable_traces();
+        self.record = true;
+    }
+
     pub(crate) fn assert(
         &mut self,
         statistics: &mut Statistics,
-        options: &Options,
         matrix: &Matrix,
         bindings: &Bindings,
         clauses: &[Off<Clause>],
@@ -65,46 +162,54 @@ impl Solver {
                     statistics,
                     matrix,
                     bindings,
-                    options.proof,
                     Off::new(literal, clause.offset),
                 );
-                if !self.scratch.contains(&literal) {
-                    self.scratch.push(literal);
-                    let mut code = literal.atom.as_u32() as i32 + 1;
-                    if !literal.pol {
-                        code = -code;
-                    }
-                    let code = code as u32;
-                    digest.update(code);
-                }
+                self.scratch.push(literal);
+                let code = literal.0 as u32;
+                digest.update(code);
             }
             if self.cache.insert(digest) {
-                statistics.sat_clauses += 1;
-                let new = self.cdcl.assert(&self.scratch);
-                self.origins.resize_with(new.offset(1), Id::default);
-                self.origins[new] = clause.id;
                 self.new_clause = true;
+                statistics.sat_clauses += 1;
+                self.pico.assert(&self.scratch);
+                if self.record {
+                    self.origins.push(clause.id);
+                    let start = self.record_literals.len();
+                    for literal in &self.scratch {
+                        self.record_literals.push(*literal);
+                    }
+                    let end = self.record_literals.len();
+                    let record_clause = Range::new(start, end);
+                    self.record_clauses.push(record_clause);
+                }
             }
             self.scratch.clear();
         }
     }
 
-    pub(crate) fn solve(&mut self, statistics: &mut Statistics) -> bool {
-        self.cdcl.solve(statistics)
+    pub(crate) fn solve(&mut self) -> bool {
+        if self.pico.solve() {
+            for var in Range::new(Id::default(), self.fresh) {
+                self.assignment[var] = self.pico.assignment(var);
+            }
+            true
+        } else {
+            false
+        }
     }
 
     pub(crate) fn seen_new_clause(&mut self) -> bool {
         std::mem::take(&mut self.new_clause)
     }
 
-    pub(crate) fn is_assigned_false(
+    pub(crate) fn is_ground_assigned_false(
         &mut self,
         matrix: &Matrix,
         bindings: &Bindings,
         literal: Off<Literal>,
     ) -> bool {
         if let Some(literal) = self.ground_literal(matrix, bindings, literal) {
-            self.cdcl.is_assigned_false(literal)
+            self.assignment[literal.var()] != literal.pol()
         } else {
             false
         }
@@ -115,23 +220,23 @@ impl Solver {
         w: &mut W,
         matrix: &Matrix,
     ) -> anyhow::Result<()> {
-        for (gi, record) in self.cdcl.core().into_iter().enumerate() {
+        for (gi, record) in self.pico.core().into_iter().enumerate() {
             let origin = self.origins[record];
             write!(w, "cnf(g{}, plain, ", gi)?;
-            let record = self.cdcl.clauses[record];
-            if record.literals.is_empty() {
+            let record = self.record_clauses[record];
+            if record.is_empty() {
                 write!(w, "$false")?;
             } else {
                 let mut print_sep = false;
-                for literal in record.literals {
-                    let literal = self.cdcl.literals[literal];
+                for literal in record {
+                    let literal = self.record_literals[literal];
                     if print_sep {
                         write!(w, " | ")?;
                     }
-                    if !literal.pol {
+                    if !literal.pol() {
                         write!(w, "~")?;
                     }
-                    let record = self.atom_record[literal.atom];
+                    let record = self.atom_record[literal.var()];
                     self.print_record(w, matrix, record)?;
                     print_sep = true;
                 }
@@ -188,25 +293,28 @@ impl Solver {
         statistics: &mut Statistics,
         matrix: &Matrix,
         bindings: &Bindings,
-        record: bool,
         lit: Off<Literal>,
-    ) -> cdcl::Literal {
+    ) -> SATLit {
         let Literal { pol, atom } = matrix.literals[lit.id];
         let atom = Off::new(atom, lit.offset);
         let mut digest = Digest::default();
         self.term(&mut digest, matrix, bindings, atom);
-        let cdcl = &mut self.cdcl;
         let mut new = false;
+        let assignment = &mut self.assignment;
+        let fresh = &mut self.fresh;
         let sat = *self.atoms.entry(digest).or_insert_with(|| {
             statistics.sat_variables += 1;
             new = true;
-            cdcl.fresh_atom()
+            assignment.push(false);
+            let var = *fresh;
+            fresh.increment();
+            var
         });
-        if new && record {
+        if new && self.record {
             let record = self.record(matrix, bindings, atom);
             self.atom_record.push(record);
         }
-        cdcl::Literal { pol, atom: sat }
+        SATLit::new(pol, sat)
     }
 
     fn term(
@@ -238,7 +346,7 @@ impl Solver {
         matrix: &Matrix,
         bindings: &Bindings,
         literal: Off<Literal>,
-    ) -> Option<cdcl::Literal> {
+    ) -> Option<SATLit> {
         let Literal { pol, atom } = matrix.literals[literal.id];
         let mut digest = Digest::default();
         let atom = Off::new(atom, literal.offset);
@@ -246,7 +354,7 @@ impl Solver {
             return None;
         }
         let atom = *self.atoms.get(&digest)?;
-        Some(cdcl::Literal { pol, atom })
+        Some(SATLit::new(pol, atom))
     }
 
     fn ground_term(

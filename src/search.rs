@@ -40,13 +40,17 @@ impl Search {
         if matrix.start.is_empty() {
             return false;
         }
+        self.solver.solve();
+        if options.proof {
+            self.solver.record_proof();
+        }
         loop {
             self.statistics.iterative_deepening_steps += 1;
             for start in &matrix.start {
-                self.start(options, matrix, *start);
+                self.start(matrix, *start);
             }
             if self.solver.seen_new_clause() {
-                if !self.solver.solve(&mut self.statistics) {
+                if !self.solver.solve() {
                     return true;
                 }
             } else {
@@ -71,18 +75,12 @@ impl Search {
         self.solver.print_proof(w, matrix)
     }
 
-    fn start(
-        &mut self,
-        options: &Options,
-        matrix: &Matrix,
-        id: Id<Clause>,
-    ) -> bool {
+    fn start(&mut self, matrix: &Matrix, id: Id<Clause>) -> bool {
         let cls = matrix.clauses[id];
         self.clauses.push(Off::new(id, 0));
         self.bindings.ensure_capacity(cls.vars);
         self.solver.assert(
             &mut self.statistics,
-            options,
             matrix,
             &self.bindings,
             &self.clauses,
@@ -92,7 +90,7 @@ impl Search {
         promises.shuffle(&mut self.rng.0);
         for id in promises {
             let lit = Off::new(id, 0);
-            if !self.prove(options, matrix, lit) {
+            if !self.prove(matrix, lit) {
                 self.bindings.clear();
                 self.clauses.clear();
                 return false;
@@ -103,12 +101,7 @@ impl Search {
         true
     }
 
-    fn prove(
-        &mut self,
-        options: &Options,
-        matrix: &Matrix,
-        goal: Off<Literal>,
-    ) -> bool {
+    fn prove(&mut self, matrix: &Matrix, goal: Off<Literal>) -> bool {
         self.statistics.literal_attempts += 1;
         let offset = goal.offset;
         let Literal { pol, atom } = matrix.literals[goal.id];
@@ -134,13 +127,20 @@ impl Search {
         }
 
         // model lemmata
-        if self.solver.is_assigned_false(matrix, &self.bindings, goal) {
+        if self
+            .solver
+            .is_ground_assigned_false(matrix, &self.bindings, goal)
+        {
             self.statistics.goals_assigned_false += 1;
             return true;
         }
         for id in self.path.range() {
             let Path(plit) = self.path[id];
-            if self.solver.is_assigned_false(matrix, &self.bindings, plit) {
+            if self.solver.is_ground_assigned_false(
+                matrix,
+                &self.bindings,
+                plit,
+            ) {
                 self.statistics.paths_assigned_false += 1;
                 return true;
             }
@@ -164,7 +164,6 @@ impl Search {
                 self.statistics.reductions += 1;
                 self.solver.assert(
                     &mut self.statistics,
-                    options,
                     matrix,
                     &self.bindings,
                     &self.clauses,
@@ -214,7 +213,6 @@ impl Search {
                 }
                 self.solver.assert(
                     &mut self.statistics,
-                    options,
                     matrix,
                     &self.bindings,
                     &self.clauses,
@@ -227,7 +225,7 @@ impl Search {
                 promises.shuffle(&mut self.rng.0);
                 for id in promises {
                     let lit = Off::new(id, save_offset);
-                    if !self.prove(options, matrix, lit) {
+                    if !self.prove(matrix, lit) {
                         self.offset = save_offset;
                         self.clauses.truncate(save_clauses);
                         self.bindings.undo_to_mark(save_bindings);
