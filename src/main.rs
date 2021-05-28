@@ -5,6 +5,7 @@ mod block;
 mod builder;
 mod digest;
 mod options;
+mod pico;
 mod pp;
 mod sat;
 mod search;
