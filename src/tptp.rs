@@ -15,12 +15,12 @@ use tptp::fof::*;
 use tptp::top::*;
 use tptp::{cnf, common, fof, TPTPIterator};
 
-#[error("{}: syntax error", self.0)]
 #[derive(Debug, Error)]
+#[error("{}: syntax error", self.0)]
 pub(crate) struct SyntaxError(String);
 
-#[error("unsupported item: {}", self.0)]
 #[derive(Debug, Error)]
+#[error("unsupported item: {}", self.0)]
 pub(crate) struct Unsupported(String);
 
 fn open_path_no_parent(path: &path::Path) -> anyhow::Result<fs::File> {

@@ -307,7 +307,7 @@ impl CDCL {
                 continue;
             }
             let pol = false;
-            self.assign(Literal { atom, pol }, None);
+            self.assign(Literal { pol, atom }, None);
             return true;
         }
         false
