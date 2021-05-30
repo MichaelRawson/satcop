@@ -284,6 +284,11 @@ impl<K, V> BlockMap<K, V> {
     }
 
     #[inline]
+    pub(crate) fn range(&self) -> Range<K> {
+        Range::new(Id::default(), self.len())
+    }
+
+    #[inline]
     pub(crate) fn push(&mut self, v: V) -> Id<K> {
         Id::new(self.block.push(v).index)
     }

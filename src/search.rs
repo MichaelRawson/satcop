@@ -1,24 +1,15 @@
 use crate::binding::Bindings;
 use crate::block::{Block, Id, Off};
+use crate::default_rng::DefaultRng;
 use crate::options::Options;
 use crate::sat;
 use crate::statistics::Statistics;
 use crate::syntax::{Clause, Literal, Matrix};
-use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
-use rand::SeedableRng;
 use std::io::Write;
 
 #[derive(Debug, Clone, Copy)]
 struct Path(Off<Literal>);
-
-struct DefaultRng(SmallRng);
-
-impl Default for DefaultRng {
-    fn default() -> Self {
-        Self(SmallRng::seed_from_u64(0))
-    }
-}
 
 #[derive(Default)]
 pub(crate) struct Search {
@@ -40,7 +31,7 @@ impl Search {
         if matrix.start.is_empty() {
             return false;
         }
-        self.solver.solve();
+        self.solver.solve(&mut self.statistics);
         if options.proof {
             self.solver.record_proof();
         }
@@ -50,7 +41,7 @@ impl Search {
                 self.start(matrix, *start);
             }
             if self.solver.seen_new_clause() {
-                if !self.solver.solve() {
+                if !self.solver.solve(&mut self.statistics) {
                     return true;
                 }
             } else {

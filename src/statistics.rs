@@ -17,6 +17,8 @@ pub(crate) struct Statistics {
     pub(crate) extensions: u32,
     pub(crate) sat_variables: u32,
     pub(crate) sat_clauses: u32,
+    pub(crate) walksat_solved: u32,
+    pub(crate) cdcl_solved: u32,
 }
 
 impl Statistics {
@@ -48,6 +50,8 @@ impl Statistics {
         writeln!(w, "% extensions: {}", self.extensions)?;
         writeln!(w, "% SAT variables: {}", self.sat_variables)?;
         writeln!(w, "% SAT clauses: {}", self.sat_clauses)?;
+        writeln!(w, "% WalkSAT solutions: {}", self.walksat_solved)?;
+        writeln!(w, "% CDCL solutions: {}", self.cdcl_solved)?;
         Ok(())
     }
 }

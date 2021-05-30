@@ -1,9 +1,9 @@
 use crate::binding::Bindings;
-use crate::block::{Block, BlockMap, Id, Off, Range};
+use crate::block::{Block, BlockMap, Id, Off};
 use crate::digest::{Digest, DigestMap, DigestSet};
-use crate::pico::Pico;
 use crate::statistics::Statistics;
 use crate::syntax::*;
+use crate::walk::Walk;
 use std::io::Write;
 
 #[derive(Debug, Clone, Copy)]
@@ -21,11 +21,11 @@ impl SATLit {
         Self(lit)
     }
 
-    fn pol(self) -> bool {
+    pub(crate) fn pol(self) -> bool {
         self.0 > 0
     }
 
-    fn var(self) -> Id<SATVar> {
+    pub(crate) fn var(self) -> Id<SATVar> {
         Id::new(self.0.abs() as u32 - 1)
     }
 }
@@ -64,8 +64,7 @@ impl Record {
 
 #[derive(Default)]
 pub(crate) struct Solver {
-    pico: Pico,
-    assignment: BlockMap<SATVar, bool>,
+    walk: Walk,
     scratch: Vec<SATLit>,
     atoms: DigestMap<Id<SATVar>>,
     cache: DigestSet,
@@ -73,8 +72,6 @@ pub(crate) struct Solver {
     new_clause: bool,
     record: bool,
     origins: BlockMap<SATCls, Id<Clause>>,
-    record_clauses: BlockMap<SATCls, Range<SATLit>>,
-    record_literals: Block<SATLit>,
     record_terms: Block<Record>,
     record_cache: DigestMap<Id<Record>>,
     atom_record: BlockMap<SATVar, Id<Record>>,
@@ -82,7 +79,7 @@ pub(crate) struct Solver {
 
 impl Solver {
     pub(crate) fn record_proof(&mut self) {
-        self.pico.enable_traces();
+        self.walk.enable_traces();
         self.record = true;
     }
 
@@ -109,31 +106,17 @@ impl Solver {
             if self.cache.insert(digest) {
                 self.new_clause = true;
                 statistics.sat_clauses += 1;
-                self.pico.assert(&self.scratch);
+                self.walk.assert(&self.scratch);
                 if self.record {
                     self.origins.push(clause.id);
-                    let start = self.record_literals.len();
-                    for literal in &self.scratch {
-                        self.record_literals.push(*literal);
-                    }
-                    let end = self.record_literals.len();
-                    let record_clause = Range::new(start, end);
-                    self.record_clauses.push(record_clause);
                 }
             }
             self.scratch.clear();
         }
     }
 
-    pub(crate) fn solve(&mut self) -> bool {
-        if self.pico.solve() {
-            for var in Range::new(Id::default(), self.fresh) {
-                self.assignment[var] = self.pico.assignment(var);
-            }
-            true
-        } else {
-            false
-        }
+    pub(crate) fn solve(&mut self, statistics: &mut Statistics) -> bool {
+        self.walk.solve(statistics)
     }
 
     pub(crate) fn seen_new_clause(&mut self) -> bool {
@@ -147,7 +130,7 @@ impl Solver {
         literal: Off<Literal>,
     ) -> bool {
         if let Some(literal) = self.ground_literal(matrix, bindings, literal) {
-            self.assignment[literal.var()] != literal.pol()
+            self.walk.assignment[literal.var()] != literal.pol()
         } else {
             false
         }
@@ -158,16 +141,16 @@ impl Solver {
         w: &mut W,
         matrix: &Matrix,
     ) -> anyhow::Result<()> {
-        for (gi, record) in self.pico.core().into_iter().enumerate() {
+        for (gi, record) in self.walk.core().into_iter().enumerate() {
             let origin = self.origins[record];
             write!(w, "cnf(g{}, plain, ", gi)?;
-            let record = self.record_clauses[record];
-            if record.is_empty() {
+            let clause = self.walk.clauses[record];
+            if clause.is_empty() {
                 write!(w, "$false")?;
             } else {
                 let mut print_sep = false;
-                for literal in record {
-                    let literal = self.record_literals[literal];
+                for literal in clause {
+                    let literal = self.walk.literals[literal];
                     if print_sep {
                         write!(w, " | ")?;
                     }
@@ -238,12 +221,12 @@ impl Solver {
         let mut digest = Digest::default();
         self.term(&mut digest, matrix, bindings, atom);
         let mut new = false;
-        let assignment = &mut self.assignment;
         let fresh = &mut self.fresh;
+        let walk = &mut self.walk;
         let sat = *self.atoms.entry(digest).or_insert_with(|| {
             statistics.sat_variables += 1;
             new = true;
-            assignment.push(false);
+            walk.add_var();
             let var = *fresh;
             fresh.increment();
             var
