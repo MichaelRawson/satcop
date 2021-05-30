@@ -31,10 +31,28 @@ impl Search {
         if matrix.start.is_empty() {
             return false;
         }
-        self.solver.solve(&mut self.statistics);
         if options.proof {
             self.solver.record_proof();
         }
+        self.depth_limit.increment();
+
+        for id in &matrix.start {
+            let cls = matrix.clauses[*id];
+            self.clauses.push(Off::new(*id, 0));
+            self.bindings.ensure_capacity(cls.vars);
+            self.solver.assert(
+                &mut self.statistics,
+                matrix,
+                &self.bindings,
+                &self.clauses,
+            );
+            self.clauses.clear();
+        }
+        if !self.solver.solve(&mut self.statistics) {
+            return true;
+        }
+        self.solver.seen_new_clause();
+
         loop {
             self.statistics.iterative_deepening_steps += 1;
             for start in &matrix.start {
@@ -70,12 +88,6 @@ impl Search {
         let cls = matrix.clauses[id];
         self.clauses.push(Off::new(id, 0));
         self.bindings.ensure_capacity(cls.vars);
-        self.solver.assert(
-            &mut self.statistics,
-            matrix,
-            &self.bindings,
-            &self.clauses,
-        );
         self.offset = cls.vars.as_u32();
         let mut promises = cls.literals.into_iter().collect::<Vec<_>>();
         promises.shuffle(&mut self.rng.0);
