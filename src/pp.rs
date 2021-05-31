@@ -9,6 +9,8 @@ pub(crate) struct PP {
     bound: Vec<Rc<FOFTerm>>,
     subst: BlockMap<Var, Option<Rc<FOFTerm>>>,
     fresh_skolem: Id<Skolem>,
+    fresh_definition: Id<Definition>,
+    defs: Vec<CNF>,
     rename: BlockMap<Var, Option<Id<Var>>>,
     fresh_rename: Id<Var>,
 }
@@ -42,15 +44,16 @@ impl PP {
     fn clausify(&mut self, nnf: NNF, is_goal: bool, source: &Source) {
         for mut clause in self.cnf(nnf) {
             self.rename_clause(self.subst.len(), &mut clause);
-            self.builder.clause(
-                clause,
-                self.fresh_rename,
-                Info {
-                    is_goal,
-                    source: source.clone(),
-                },
-                true,
-            );
+            let source = source.clone();
+            let info = Info { is_goal, source };
+            self.builder.clause(clause, self.fresh_rename, info, true);
+        }
+        while let Some(mut clause) = self.defs.pop() {
+            self.rename_clause(self.subst.len(), &mut clause);
+            let source = source.clone();
+            let is_goal = false;
+            let info = Info { is_goal, source };
+            self.builder.clause(clause, self.fresh_rename, info, true);
         }
     }
 
@@ -105,7 +108,10 @@ impl PP {
             NNF::Or(fs) => {
                 let mut result = vec![CNF(vec![])];
                 for f in fs {
-                    let cnf = self.cnf(f);
+                    let mut cnf = self.cnf(f);
+                    if result.len() > 1 && cnf.len() > 1 {
+                        cnf = self.name(cnf);
+                    }
                     result = Self::distribute(result, cnf);
                 }
                 result
@@ -152,6 +158,31 @@ impl PP {
             result.push(clause);
         }
         result
+    }
+
+    fn name(&mut self, cnf: Vec<CNF>) -> Vec<CNF> {
+        let mut vars = vec![];
+        for clause in &cnf {
+            clause.vars(&mut vars);
+        }
+        vars.sort();
+        vars.dedup();
+        let name = Name::Definition(self.fresh_definition);
+        self.fresh_definition.increment();
+        let arity = vars.len() as u32;
+        let sort = Sort::Bool;
+        let symbol = Symbol { arity, sort, name };
+        let id = self.new_symbol(symbol);
+        let vars = vars.into_iter().map(FOFTerm::Var).map(Rc::new).collect();
+        let atom = Rc::new(FOFTerm::Fun(id, vars));
+        let pol = true;
+        let lit = NNFLiteral { pol, atom };
+        for mut clause in cnf {
+            clause.0.push(lit.clone().negated());
+            self.defs.push(clause);
+        }
+        let named = CNF(vec![lit]);
+        vec![named]
     }
 
     fn distribute(left: Vec<CNF>, right: Vec<CNF>) -> Vec<CNF> {

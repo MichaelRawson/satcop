@@ -11,8 +11,13 @@ pub(crate) enum Sort {
     Obj,
 }
 
+#[derive(Debug)]
 pub(crate) struct Skolem;
 
+#[derive(Debug)]
+pub(crate) struct Definition;
+
+#[derive(Debug)]
 pub(crate) enum Name {
     Grounding,
     Equality,
@@ -21,6 +26,7 @@ pub(crate) enum Name {
     Number(String),
     Distinct(String),
     Skolem(Id<Skolem>),
+    Definition(Id<Definition>)
 }
 
 impl fmt::Display for Name {
@@ -32,6 +38,7 @@ impl fmt::Display for Name {
             Self::Quoted(quoted) => write!(f, "'{}'", quoted),
             Self::Distinct(distinct) => write!(f, "\"{}\"", distinct),
             Self::Skolem(n) => write!(f, "sK{}", n.as_u32()),
+            Self::Definition(n) => write!(f, "sP{}", n.as_u32()),
         }
     }
 }
@@ -241,6 +248,19 @@ pub(crate) enum FOFTerm {
     Fun(Id<Symbol>, Vec<Rc<FOFTerm>>),
 }
 
+impl FOFTerm {
+    fn vars(&self, vars: &mut Vec<Id<Var>>) {
+        match self {
+            Self::Var(x) => vars.push(*x),
+            Self::Fun(_, args) => {
+                for arg in args {
+                    arg.vars(vars);
+                }
+            }
+        }
+    }
+}
+
 impl fmt::Debug for FOFTerm {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
@@ -307,6 +327,10 @@ impl NNFLiteral {
         self.pol = !self.pol;
         self
     }
+
+    pub(crate) fn vars(&self, vars: &mut Vec<Id<Var>>) {
+        self.atom.vars(vars);
+    }
 }
 
 impl fmt::Debug for NNFLiteral {
@@ -345,6 +369,13 @@ impl NNF {
 
 pub(crate) struct CNF(pub(crate) Vec<NNFLiteral>);
 
+impl CNF {
+    pub(crate) fn vars(&self, vars: &mut Vec<Id<Var>>) {
+        for lit in &self.0 {
+            lit.vars(vars);
+        }
+    }
+}
 impl fmt::Debug for CNF {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:?}", self.0)
