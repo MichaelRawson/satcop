@@ -1,8 +1,8 @@
 use crate::binding::Bindings;
 use crate::block::{Block, Id, Off};
-use crate::default_rng::DefaultRng;
+use crate::ground::Ground;
 use crate::options::Options;
-use crate::sat;
+use crate::rng::DefaultRng;
 use crate::statistics::Statistics;
 use crate::syntax::{Clause, Literal, Matrix};
 use rand::seq::SliceRandom;
@@ -15,7 +15,7 @@ struct Path(Off<Literal>);
 pub(crate) struct Search {
     statistics: Statistics,
     rng: DefaultRng,
-    solver: sat::Solver,
+    ground: Ground,
     bindings: Bindings,
     path: Block<Path>,
     clauses: Vec<Off<Clause>>,
@@ -32,7 +32,7 @@ impl Search {
             return false;
         }
         if options.proof {
-            self.solver.record_proof();
+            self.ground.record_proof();
         }
         self.depth_limit.increment();
 
@@ -40,7 +40,7 @@ impl Search {
             let cls = matrix.clauses[*id];
             self.clauses.push(Off::new(*id, 0));
             self.bindings.ensure_capacity(cls.vars);
-            self.solver.assert(
+            self.ground.assert(
                 &mut self.statistics,
                 matrix,
                 &self.bindings,
@@ -48,18 +48,18 @@ impl Search {
             );
             self.clauses.clear();
         }
-        if !self.solver.solve(&mut self.statistics) {
+        if !self.ground.solve(&mut self.statistics) {
             return true;
         }
-        self.solver.seen_new_clause();
+        self.ground.seen_new_clause();
 
         loop {
             self.statistics.iterative_deepening_steps += 1;
             for start in &matrix.start {
                 self.start(matrix, *start);
             }
-            if self.solver.seen_new_clause() {
-                if !self.solver.solve(&mut self.statistics) {
+            if self.ground.seen_new_clause() {
+                if !self.ground.solve(&mut self.statistics) {
                     return true;
                 }
             } else {
@@ -81,7 +81,7 @@ impl Search {
         w: &mut W,
         matrix: &Matrix,
     ) -> anyhow::Result<()> {
-        self.solver.print_proof(w, matrix)
+        self.ground.print_proof(w, matrix)
     }
 
     fn start(&mut self, matrix: &Matrix, id: Id<Clause>) -> bool {
@@ -90,7 +90,7 @@ impl Search {
         self.bindings.ensure_capacity(cls.vars);
         self.offset = cls.vars.as_u32();
         let mut promises = cls.literals.into_iter().collect::<Vec<_>>();
-        promises.shuffle(&mut self.rng.0);
+        promises.shuffle(self.rng.get());
         for id in promises {
             let lit = Off::new(id, 0);
             if !self.prove(matrix, lit) {
@@ -131,7 +131,7 @@ impl Search {
 
         // model lemmata
         if self
-            .solver
+            .ground
             .is_ground_assigned_false(matrix, &self.bindings, goal)
         {
             self.statistics.goals_assigned_false += 1;
@@ -139,7 +139,7 @@ impl Search {
         }
         for id in self.path.range() {
             let Path(plit) = self.path[id];
-            if self.solver.is_ground_assigned_false(
+            if self.ground.is_ground_assigned_false(
                 matrix,
                 &self.bindings,
                 plit,
@@ -165,7 +165,7 @@ impl Search {
                 && self.check_constraints(matrix)
             {
                 self.statistics.reductions += 1;
-                self.solver.assert(
+                self.ground.assert(
                     &mut self.statistics,
                     matrix,
                     &self.bindings,
@@ -187,7 +187,7 @@ impl Search {
         let save_offset = self.offset;
         self.path.push(Path(goal));
         let mut alternatives = matrix.index[sym][!pol as usize].clone();
-        alternatives.shuffle(&mut self.rng.0);
+        alternatives.shuffle(self.rng.get());
 
         /*
         for pid in self.path.range() {
@@ -214,7 +214,7 @@ impl Search {
                     self.bindings.undo_to_mark(save_bindings);
                     continue 'extensions;
                 }
-                self.solver.assert(
+                self.ground.assert(
                     &mut self.statistics,
                     matrix,
                     &self.bindings,
@@ -225,7 +225,7 @@ impl Search {
                     .into_iter()
                     .filter(|id| *id != pos.lit)
                     .collect::<Vec<_>>();
-                promises.shuffle(&mut self.rng.0);
+                promises.shuffle(self.rng.get());
                 for id in promises {
                     let lit = Off::new(id, save_offset);
                     if !self.prove(matrix, lit) {

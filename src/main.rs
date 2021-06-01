@@ -3,17 +3,17 @@
 mod binding;
 mod block;
 mod builder;
-mod default_rng;
 mod digest;
+mod ground;
 mod options;
 mod pp;
+mod rng;
 mod sat;
 mod search;
 mod statistics;
 mod syntax;
 mod tptp;
 mod tstp;
-mod walk;
 
 use crate::options::Options;
 use crate::search::Search;

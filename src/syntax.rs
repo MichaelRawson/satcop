@@ -26,7 +26,7 @@ pub(crate) enum Name {
     Number(String),
     Distinct(String),
     Skolem(Id<Skolem>),
-    Definition(Id<Definition>)
+    Definition(Id<Definition>),
 }
 
 impl fmt::Display for Name {

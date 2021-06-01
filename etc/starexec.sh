@@ -6,12 +6,13 @@ CARGO_PROFILE_RELEASE_DEBUG=0
 CARGO_PROFILE_RELEASE_PANIC="abort"
 TARGET=x86_64-unknown-linux-musl
 cargo build --release --target $TARGET
-LAZYCOP=target/$TARGET/release/lazycop2
+SATCOP=target/$TARGET/release/satcop
+strip $SATCOP
+exit 0
 
 rm -rf lazycop.zip bin/
 mkdir bin/
-strip $LAZYCOP
-cp $LAZYCOP bin/
+cp $SATCOP bin/
 cp etc/starexec_run_default bin/
 zip lazycop.zip -r bin/
 rm -rf bin/
