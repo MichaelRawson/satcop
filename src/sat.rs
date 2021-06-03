@@ -114,6 +114,7 @@ pub(crate) struct Solver {
     pub(crate) clauses: BlockMap<Cls, Range<Lit>>,
     pub(crate) literals: Block<Lit>,
     pub(crate) assignment: BlockMap<Var, bool>,
+    pub(crate) unsat: bool,
     forced: BlockMap<Var, bool>,
     watch: BlockMap<Var, Option<Box<Watch>>>,
     unsatisfied: Vec<Id<Cls>>,
@@ -132,7 +133,14 @@ impl Solver {
         self.watch.push(None);
     }
 
-    pub(crate) fn assert(&mut self, clause: &[Lit]) {
+    pub(crate) fn assert(
+        &mut self,
+        statistics: &mut Statistics,
+        clause: &[Lit],
+    ) {
+        if self.unsat {
+            return;
+        }
         self.cdcl.assert(clause);
         let start = self.literals.len();
         for literal in clause {
@@ -152,16 +160,21 @@ impl Solver {
         if !self.satisfy(id) {
             self.unsatisfied.push(id);
         }
+        self.solve(statistics);
     }
 
-    pub(crate) fn solve(&mut self, statistics: &mut Statistics) -> bool {
+    pub(crate) fn core(&self) -> Vec<Id<Cls>> {
+        self.cdcl.core()
+    }
+
+    fn solve(&mut self, statistics: &mut Statistics) {
         let mut possible = vec![];
         for _ in 0..ITERATIONS {
             let unsatisfied = if let Some(unsatisfied) = self.choose_unsat() {
                 unsatisfied
             } else {
                 statistics.walksat_solved += 1;
-                return true;
+                return;
             };
             possible.clear();
             possible.extend(
@@ -188,14 +201,9 @@ impl Solver {
                     }
                 }
             }
-            true
         } else {
-            false
+            self.unsat = true;
         }
-    }
-
-    pub(crate) fn core(&self) -> Vec<Id<Cls>> {
-        self.cdcl.core()
     }
 
     fn choose_unsat(&mut self) -> Option<Id<Cls>> {

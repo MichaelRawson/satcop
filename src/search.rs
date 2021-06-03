@@ -48,7 +48,7 @@ impl Search {
             );
             self.clauses.clear();
         }
-        if !self.ground.solve(&mut self.statistics) {
+        if self.ground.unsat() {
             return true;
         }
         self.ground.seen_new_clause();
@@ -58,11 +58,10 @@ impl Search {
             for start in &matrix.start {
                 self.start(matrix, *start);
             }
-            if self.ground.seen_new_clause() {
-                if !self.ground.solve(&mut self.statistics) {
-                    return true;
-                }
-            } else {
+            if self.ground.unsat() {
+                return true;
+            }
+            if !self.ground.seen_new_clause() {
                 self.depth_limit.increment();
                 self.statistics.maximum_path_limit = self.depth_limit.as_u32();
             }
@@ -105,6 +104,9 @@ impl Search {
     }
 
     fn prove(&mut self, matrix: &Matrix, goal: Off<Literal>) -> bool {
+        if self.ground.unsat() {
+            return true;
+        }
         self.statistics.literal_attempts += 1;
         let offset = goal.offset;
         let Literal { pol, atom } = matrix.literals[goal.id];

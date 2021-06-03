@@ -56,6 +56,10 @@ impl Ground {
         self.record = true;
     }
 
+    pub(crate) fn unsat(&self) -> bool {
+        self.sat.unsat
+    }
+
     pub(crate) fn assert(
         &mut self,
         statistics: &mut Statistics,
@@ -79,17 +83,13 @@ impl Ground {
             if self.cache.insert(digest) {
                 self.new_clause = true;
                 statistics.sat_clauses += 1;
-                self.sat.assert(&self.scratch);
+                self.sat.assert(statistics, &self.scratch);
                 if self.record {
                     self.origins.push(clause.id);
                 }
             }
             self.scratch.clear();
         }
-    }
-
-    pub(crate) fn solve(&mut self, statistics: &mut Statistics) -> bool {
-        self.sat.solve(statistics)
     }
 
     pub(crate) fn seen_new_clause(&mut self) -> bool {
