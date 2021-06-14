@@ -11,8 +11,6 @@ pub(crate) struct Statistics {
     pub(crate) depth_failures: u32,
     pub(crate) regularity_failures: u32,
     pub(crate) tautology_failures: u32,
-    pub(crate) goals_assigned_false: u32,
-    pub(crate) paths_assigned_false: u32,
     pub(crate) reductions: u32,
     pub(crate) extensions: u32,
     pub(crate) sat_variables: u32,
@@ -36,16 +34,6 @@ impl Statistics {
         writeln!(w, "% depth failures: {}", self.depth_failures)?;
         writeln!(w, "% regularity failures: {}", self.regularity_failures)?;
         writeln!(w, "% tautology failures: {}", self.tautology_failures)?;
-        writeln!(
-            w,
-            "% goal literals assigned false: {}",
-            self.goals_assigned_false
-        )?;
-        writeln!(
-            w,
-            "% path literals assigned false: {}",
-            self.paths_assigned_false
-        )?;
         writeln!(w, "% reductions: {}", self.reductions)?;
         writeln!(w, "% extensions: {}", self.extensions)?;
         writeln!(w, "% SAT variables: {}", self.sat_variables)?;

@@ -96,17 +96,15 @@ impl Ground {
         std::mem::take(&mut self.new_clause)
     }
 
-    pub(crate) fn is_ground_assigned_false(
+    pub(crate) fn is_assigned_true(
         &mut self,
+        statistics: &mut Statistics,
         matrix: &Matrix,
         bindings: &Bindings,
         literal: Off<Literal>,
     ) -> bool {
-        if let Some(literal) = self.ground_literal(matrix, bindings, literal) {
-            self.sat.assignment[literal.var()] != literal.pol()
-        } else {
-            false
-        }
+        let literal = self.literal(statistics, matrix, bindings, literal);
+        self.sat.assignment[literal.var()] == literal.pol()
     }
 
     pub(crate) fn print_proof<W: Write>(
@@ -233,46 +231,6 @@ impl Ground {
                 self.term(digest, matrix, bindings, arg);
             };
         }
-    }
-
-    fn ground_literal(
-        &mut self,
-        matrix: &Matrix,
-        bindings: &Bindings,
-        literal: Off<Literal>,
-    ) -> Option<sat::Lit> {
-        let Literal { pol, atom } = matrix.literals[literal.id];
-        let mut digest = Digest::default();
-        let atom = Off::new(atom, literal.offset);
-        if !self.ground_term(&mut digest, matrix, bindings, atom) {
-            return None;
-        }
-        let atom = *self.atoms.get(&digest)?;
-        Some(sat::Lit::new(pol, atom))
-    }
-
-    fn ground_term(
-        &mut self,
-        digest: &mut Digest,
-        matrix: &Matrix,
-        bindings: &Bindings,
-        mut term: Off<Term>,
-    ) -> bool {
-        let sym = matrix.terms[term.id].as_sym();
-        digest.update(sym.as_u32());
-        let arity = matrix.symbols[sym].arity;
-        for _ in 0..arity {
-            term.id.increment();
-            let arg = matrix.terms[term.id].as_arg();
-            let arg =
-                bindings.resolve(&matrix.terms, Off::new(arg, term.offset));
-            if matrix.terms[arg.id].is_var() {
-                return false;
-            } else {
-                self.ground_term(digest, matrix, bindings, arg);
-            };
-        }
-        true
     }
 
     fn record(

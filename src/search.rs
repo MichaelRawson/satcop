@@ -4,7 +4,7 @@ use crate::ground::Ground;
 use crate::options::Options;
 use crate::rng::DefaultRng;
 use crate::statistics::Statistics;
-use crate::syntax::{Clause, Literal, Matrix};
+use crate::syntax::{Clause, Literal, Matrix, Term};
 use rand::seq::SliceRandom;
 use std::io::Write;
 
@@ -131,26 +131,6 @@ impl Search {
             }
         }
 
-        // model lemmata
-        if self
-            .ground
-            .is_ground_assigned_false(matrix, &self.bindings, goal)
-        {
-            self.statistics.goals_assigned_false += 1;
-            return true;
-        }
-        for id in self.path.range() {
-            let Path(plit) = self.path[id];
-            if self.ground.is_ground_assigned_false(
-                matrix,
-                &self.bindings,
-                plit,
-            ) {
-                self.statistics.paths_assigned_false += 1;
-                return true;
-            }
-        }
-
         let save_bindings = self.bindings.mark();
         // reductions
         for pid in self.path.range() {
@@ -161,11 +141,7 @@ impl Search {
             if sym != psym || pol == ppol {
                 continue;
             }
-            if self
-                .bindings
-                .unify(&matrix.symbols, &matrix.terms, atom, patom)
-                && self.check_constraints(matrix)
-            {
+            if self.unify(matrix, atom, patom) {
                 self.statistics.reductions += 1;
                 self.ground.assert(
                     &mut self.statistics,
@@ -191,31 +167,17 @@ impl Search {
         let mut alternatives = matrix.index[sym][!pol as usize].clone();
         alternatives.shuffle(self.rng.get());
 
-        /*
-        for pid in self.path.range() {
-            self.matrix.print_literal(&self.bindings, self.path[pid]);
-            println!()
-        }
-        println!("-------------------");
-        */
         'extensions: for pos in alternatives {
             let cls = matrix.clauses[pos.cls];
             self.bindings.ensure_capacity(cls.vars.offset(self.offset));
-            if self.bindings.unify(
-                &matrix.symbols,
-                &matrix.terms,
+            if self.unify(
+                matrix,
                 atom,
                 Off::new(matrix.literals[pos.lit].atom, self.offset),
             ) {
                 self.statistics.extensions += 1;
                 self.clauses.push(Off::new(pos.cls, self.offset));
                 self.offset += cls.vars.as_u32();
-                if !self.check_constraints(matrix) {
-                    self.offset = save_offset;
-                    self.clauses.truncate(save_clauses);
-                    self.bindings.undo_to_mark(save_bindings);
-                    continue 'extensions;
-                }
                 self.ground.assert(
                     &mut self.statistics,
                     matrix,
@@ -228,7 +190,15 @@ impl Search {
                     .filter(|id| *id != pos.lit)
                     .collect::<Vec<_>>();
                 promises.shuffle(self.rng.get());
-                for id in promises {
+                while let Some(index) = promises.iter().position(|id| {
+                    self.ground.is_assigned_true(
+                        &mut self.statistics,
+                        matrix,
+                        &self.bindings,
+                        Off::new(*id, save_offset),
+                    )
+                }) {
+                    let id = promises.swap_remove(index);
                     let lit = Off::new(id, save_offset);
                     if !self.prove(matrix, lit) {
                         self.offset = save_offset;
@@ -247,7 +217,18 @@ impl Search {
         false
     }
 
-    fn check_constraints(&mut self, matrix: &Matrix) -> bool {
+    fn unify(
+        &mut self,
+        matrix: &Matrix,
+        left: Off<Term>,
+        right: Off<Term>,
+    ) -> bool {
+        if !self
+            .bindings
+            .unify(&matrix.symbols, &matrix.terms, left, right)
+        {
+            return false;
+        }
         for cls in &self.clauses {
             let diseqs = matrix.clauses[cls.id].disequations;
             for diseq in &matrix.disequations[diseqs] {
