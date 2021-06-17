@@ -2,7 +2,7 @@ use crate::binding::Bindings;
 use crate::block::{Block, BlockMap, Id, Off};
 use crate::digest::{Digest, DigestMap, DigestSet};
 use crate::sat;
-use crate::statistics::Statistics;
+use crate::statistics;
 use crate::syntax::*;
 use std::io::Write;
 
@@ -51,6 +51,10 @@ pub(crate) struct Ground {
 }
 
 impl Ground {
+    pub(crate) fn seed(&mut self, seed: u64) {
+        self.sat.seed(seed);
+    }
+
     pub(crate) fn record_proof(&mut self) {
         self.sat.enable_traces();
         self.record = true;
@@ -62,7 +66,6 @@ impl Ground {
 
     pub(crate) fn assert(
         &mut self,
-        statistics: &mut Statistics,
         matrix: &Matrix,
         bindings: &Bindings,
         clauses: &[Off<Clause>],
@@ -71,7 +74,6 @@ impl Ground {
             let mut digest = Digest::default();
             for literal in matrix.clauses[clause.id].literals {
                 let literal = self.literal(
-                    statistics,
                     matrix,
                     bindings,
                     Off::new(literal, clause.offset),
@@ -82,8 +84,8 @@ impl Ground {
             }
             if self.cache.insert(digest) {
                 self.new_clause = true;
-                statistics.sat_clauses += 1;
-                self.sat.assert(statistics, &self.scratch);
+                statistics::SAT_CLAUSES.inc();
+                self.sat.assert(&self.scratch);
                 if self.record {
                     self.origins.push(clause.id);
                 }
@@ -98,12 +100,11 @@ impl Ground {
 
     pub(crate) fn is_assigned_true(
         &mut self,
-        statistics: &mut Statistics,
         matrix: &Matrix,
         bindings: &Bindings,
         literal: Off<Literal>,
     ) -> bool {
-        let literal = self.literal(statistics, matrix, bindings, literal);
+        let literal = self.literal(matrix, bindings, literal);
         self.sat.assignment[literal.var()] == literal.pol()
     }
 
@@ -182,7 +183,6 @@ impl Ground {
 
     fn literal(
         &mut self,
-        statistics: &mut Statistics,
         matrix: &Matrix,
         bindings: &Bindings,
         lit: Off<Literal>,
@@ -195,7 +195,7 @@ impl Ground {
         let fresh = &mut self.fresh;
         let solver = &mut self.sat;
         let sat = *self.atoms.entry(digest).or_insert_with(|| {
-            statistics.sat_variables += 1;
+            statistics::SAT_VARIABLES.inc();
             new = true;
             solver.add_var();
             let var = *fresh;

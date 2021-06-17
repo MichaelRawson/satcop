@@ -7,6 +7,7 @@ use fnv::{FnvHashMap, FnvHashSet};
 use memmap::Mmap;
 use std::borrow::Cow;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::{env, fs, path};
 use thiserror::Error;
 use tptp::cnf::*;
@@ -455,7 +456,7 @@ impl Loader {
     fn annotated<D: Dialect>(
         &mut self,
         selection: Option<&FnvHashSet<Name>>,
-        path: Rc<str>,
+        path: Arc<str>,
         annotated: Annotated<D>,
     ) -> anyhow::Result<()> {
         if selection
@@ -490,7 +491,7 @@ impl Loader {
         selection: Option<FnvHashSet<Name>>,
         path: &path::Path,
     ) -> anyhow::Result<()> {
-        let display_path: Rc<str> = format!("'{}'", path.display()).into();
+        let display_path: Arc<str> = format!("'{}'", path.display()).into();
         let map = read_path(parent, path)?;
         let bytes = map.as_deref().unwrap_or_default();
         let statements = TPTPIterator::<()>::new(bytes);

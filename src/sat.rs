@@ -1,6 +1,6 @@
 use crate::block::{Block, BlockMap, Id, Range};
 use crate::rng::DefaultRng;
-use crate::statistics::Statistics;
+use crate::statistics;
 use rand::seq::SliceRandom;
 use rand::Rng;
 use std::os::raw::c_int;
@@ -123,6 +123,10 @@ pub(crate) struct Solver {
 }
 
 impl Solver {
+    pub(crate) fn seed(&mut self, seed: u64) {
+        self.rng.seed(seed);
+    }
+
     pub(crate) fn enable_traces(&mut self) {
         self.cdcl.enable_traces();
     }
@@ -133,11 +137,7 @@ impl Solver {
         self.watch.push(None);
     }
 
-    pub(crate) fn assert(
-        &mut self,
-        statistics: &mut Statistics,
-        clause: &[Lit],
-    ) {
+    pub(crate) fn assert(&mut self, clause: &[Lit]) {
         if self.unsat {
             return;
         }
@@ -160,20 +160,20 @@ impl Solver {
         if !self.satisfy(id) {
             self.unsatisfied.push(id);
         }
-        self.solve(statistics);
+        self.solve();
     }
 
     pub(crate) fn core(&self) -> Vec<Id<Cls>> {
         self.cdcl.core()
     }
 
-    fn solve(&mut self, statistics: &mut Statistics) {
+    fn solve(&mut self) {
         let mut possible = vec![];
         for _ in 0..ITERATIONS {
             let unsatisfied = if let Some(unsatisfied) = self.choose_unsat() {
                 unsatisfied
             } else {
-                statistics.walksat_solved += 1;
+                statistics::WALKSAT_SOLVED.inc();
                 return;
             };
             possible.clear();
@@ -192,7 +192,7 @@ impl Solver {
             }
         }
         if self.cdcl.solve() {
-            statistics.cdcl_solved += 1;
+            statistics::CDCL_SOLVED.inc();
             for var in self.assignment.range() {
                 if !self.forced[var] {
                     self.forced[var] = self.cdcl.forced(var);

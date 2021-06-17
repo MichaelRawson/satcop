@@ -2,6 +2,7 @@ use crate::binding::Bindings;
 use crate::block::{Block, BlockMap, Id, Off, Range};
 use std::fmt;
 use std::rc::Rc;
+use std::sync::Arc;
 
 pub(crate) const EQUALITY: Id<Symbol> = Id::new(1);
 
@@ -140,7 +141,7 @@ pub(crate) struct Position {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) enum Source {
     Equality,
-    Axiom { path: Rc<str>, name: String },
+    Axiom { path: Arc<str>, name: String },
 }
 
 #[derive(Debug, Clone)]
