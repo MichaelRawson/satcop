@@ -1,8 +1,6 @@
 use crate::block::{Block, BlockMap, Id, Range};
 use crate::rng::DefaultRng;
 use crate::statistics;
-use rand::seq::SliceRandom;
-use rand::Rng;
 use std::os::raw::c_int;
 
 #[derive(Debug, Clone, Copy)]
@@ -57,15 +55,12 @@ struct CDCL(*mut PicoSAT);
 impl Default for CDCL {
     fn default() -> Self {
         let sat = unsafe { picosat_init() };
+        assert!(unsafe { picosat_enable_trace_generation(sat) } != 0);
         Self(sat)
     }
 }
 
 impl CDCL {
-    fn enable_traces(&mut self) {
-        assert!(unsafe { picosat_enable_trace_generation(self.0) } != 0);
-    }
-
     fn assert(&mut self, clause: &[Lit]) {
         for lit in clause {
             let lit = lit.0 as c_int;
@@ -124,11 +119,7 @@ pub(crate) struct Solver {
 
 impl Solver {
     pub(crate) fn seed(&mut self, seed: u64) {
-        self.rng.seed(seed);
-    }
-
-    pub(crate) fn enable_traces(&mut self) {
-        self.cdcl.enable_traces();
+        self.rng.seed(seed)
     }
 
     pub(crate) fn add_var(&mut self) {
@@ -183,7 +174,7 @@ impl Solver {
                     .map(|id| self.literals[id])
                     .filter(|lit| !self.forced[lit.var()]),
             );
-            if let Some(flip) = possible.choose(self.rng.get()) {
+            if let Some(flip) = self.rng.choose(&possible) {
                 self.flip(flip.var());
                 self.satisfy(unsatisfied);
             } else {
@@ -208,7 +199,7 @@ impl Solver {
 
     fn choose_unsat(&mut self) -> Option<Id<Cls>> {
         while !self.unsatisfied.is_empty() {
-            let index = self.rng.get().gen_range(0..self.unsatisfied.len());
+            let index = self.rng.index(self.unsatisfied.len());
             let unsatisfied = self.unsatisfied.swap_remove(index);
             if !self.satisfy(unsatisfied) {
                 return Some(unsatisfied);

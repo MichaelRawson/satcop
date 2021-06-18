@@ -16,7 +16,7 @@ impl Bindings {
         self.trail.clear();
     }
 
-    pub(crate) fn ensure_capacity(&mut self, len: Id<Var>) {
+    pub(crate) fn resize(&mut self, len: Id<Var>) {
         self.bound.resize_with(len, Default::default);
     }
 
@@ -38,7 +38,7 @@ impl Bindings {
         mut term: Off<Term>,
     ) -> Off<Term> {
         while terms[term.id].is_var() {
-            let x = terms[term.id].as_var().offset(term.offset);
+            let x = term.commute(|id| terms[id].as_var()).canonicalise();
             if let Some(bound) = self.bound[x] {
                 term = bound;
             } else {
@@ -64,26 +64,26 @@ impl Bindings {
         for _ in 0..arity {
             left.id.increment();
             right.id.increment();
-            let s = Off::new(terms[left.id].as_arg(), left.offset);
-            let t = Off::new(terms[right.id].as_arg(), right.offset);
+            let s = left.commute(|id| terms[id].as_arg());
+            let t = right.commute(|id| terms[id].as_arg());
             let s = self.resolve(terms, s);
             let t = self.resolve(terms, t);
             match (terms[s.id].is_var(), terms[t.id].is_var()) {
                 (true, true) => {
-                    let x = terms[s.id].as_var().offset(s.offset);
-                    let y = terms[t.id].as_var().offset(t.offset);
+                    let x = s.commute(|id| terms[id].as_var()).canonicalise();
+                    let y = t.commute(|id| terms[id].as_var()).canonicalise();
                     if x != y {
                         self.bind(x, t);
                     }
                 }
                 (true, false) => {
-                    let x = terms[s.id].as_var().offset(s.offset);
+                    let x = s.commute(|id| terms[id].as_var()).canonicalise();
                     if !self.try_bind(syms, terms, x, t) {
                         return false;
                     }
                 }
                 (false, true) => {
-                    let x = terms[t.id].as_var().offset(t.offset);
+                    let x = t.commute(|id| terms[id].as_var()).canonicalise();
                     if !self.try_bind(syms, terms, x, s) {
                         return false;
                     }
@@ -113,8 +113,8 @@ impl Bindings {
             return false;
         }
         if lvar && rvar {
-            let x = terms[left.id].as_var().offset(left.offset);
-            let y = terms[right.id].as_var().offset(right.offset);
+            let x = left.commute(|id| terms[id].as_var()).canonicalise();
+            let y = right.commute(|id| terms[id].as_var()).canonicalise();
             return x == y;
         }
         let lsym = terms[left.id].as_sym();
@@ -126,8 +126,8 @@ impl Bindings {
         for _ in 0..arity {
             left.id.increment();
             right.id.increment();
-            let s = Off::new(terms[left.id].as_arg(), left.offset);
-            let t = Off::new(terms[right.id].as_arg(), right.offset);
+            let s = left.commute(|id| terms[id].as_arg());
+            let t = right.commute(|id| terms[id].as_arg());
             if !self.equal(syms, terms, s, t) {
                 return false;
             }
@@ -143,13 +143,13 @@ impl Bindings {
         mut t: Off<Term>,
     ) -> bool {
         if terms[t.id].is_var() {
-            let t = terms[t.id].as_var().offset(t.offset);
+            let t = t.commute(|id| terms[id].as_var()).canonicalise();
             x == t
         } else {
             let arity = syms[terms[t.id].as_sym()].arity;
             for _ in 0..arity {
                 t.id.increment();
-                let t = Off::new(terms[t.id].as_arg(), t.offset);
+                let t = t.commute(|id| terms[id].as_arg());
                 let t = self.resolve(terms, t);
                 if self.occurs(syms, terms, x, t) {
                     return true;

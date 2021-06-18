@@ -177,7 +177,7 @@ impl Matrix {
             if clause.literals.is_empty() {
                 print!("$false")
             } else {
-                bindings.ensure_capacity(clause.vars);
+                bindings.resize(clause.vars);
                 for id in clause.literals {
                     if id != clause.literals.start {
                         print!(" | ");
@@ -209,10 +209,7 @@ impl Matrix {
         if !self.literals[lit.id].pol {
             print!("~");
         }
-        self.print_term(
-            &bindings,
-            Off::new(self.literals[lit.id].atom, lit.offset),
-        );
+        self.print_term(&bindings, lit.commute(|id| self.literals[id].atom));
     }
 
     pub(crate) fn print_term(&self, bindings: &Bindings, term: Off<Term>) {
@@ -220,7 +217,9 @@ impl Matrix {
         if self.terms[term.id].is_var() {
             print!(
                 "X{}",
-                self.terms[term.id].as_var().offset(term.offset).as_u32()
+                term.commute(|id| self.terms[id].as_var())
+                    .canonicalise()
+                    .as_u32()
             );
         } else {
             let sym = self.terms[term.id].as_sym();
@@ -235,8 +234,8 @@ impl Matrix {
                     print!(",");
                 }
                 term.id.increment();
-                let arg = self.terms[term.id].as_arg();
-                self.print_term(bindings, Off::new(arg, term.offset));
+                let arg = term.commute(|id| self.terms[id].as_arg());
+                self.print_term(bindings, arg);
             }
             print!(")");
         }

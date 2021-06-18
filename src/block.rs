@@ -85,13 +85,23 @@ impl<T> Hash for Id<T> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct Off<T> {
     pub(crate) id: Id<T>,
-    pub(crate) offset: u32,
+    offset: u32,
 }
 
 impl<T> Off<T> {
     #[inline]
     pub(crate) fn new(id: Id<T>, offset: u32) -> Self {
         Self { id, offset }
+    }
+
+    #[inline]
+    pub(crate) fn commute<R, F: FnOnce(Id<T>) -> Id<R>>(self, f: F) -> Off<R> {
+        Off::new(f(self.id), self.offset)
+    }
+
+    #[inline]
+    pub(crate) fn canonicalise(self) -> Id<T> {
+        self.id.offset(self.offset)
     }
 }
 

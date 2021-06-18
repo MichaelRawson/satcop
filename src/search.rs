@@ -5,7 +5,7 @@ use crate::options::Options;
 use crate::rng::DefaultRng;
 use crate::statistics;
 use crate::syntax::{Clause, Literal, Matrix, Term};
-use rand::seq::SliceRandom;
+use crate::tstp;
 use std::io::Write;
 
 #[derive(Debug, Clone, Copy)]
@@ -20,6 +20,7 @@ pub(crate) struct Search {
     clauses: Vec<Off<Clause>>,
     depth_limit: Id<Path>,
     offset: u32,
+    new_clause: bool,
 }
 
 impl Search {
@@ -28,26 +29,26 @@ impl Search {
         self.ground.seed(seed);
     }
 
-    pub(crate) fn go(&mut self, options: &Options, matrix: &Matrix) -> bool {
-        if matrix.start.is_empty() {
-            return false;
-        }
-        if options.proof {
-            self.ground.record_proof();
-        }
+    pub(crate) fn print_proof<W: Write>(
+        &self,
+        w: &mut W,
+        options: &Options,
+        matrix: &Matrix,
+    ) -> anyhow::Result<()> {
+        tstp::print_proof(w, &self.ground, options, matrix)
+    }
+
+    pub(crate) fn go(&mut self, matrix: &Matrix) {
         self.depth_limit.increment();
 
         for id in &matrix.start {
-            let cls = matrix.clauses[*id];
-            self.clauses.push(Off::new(*id, 0));
-            self.bindings.ensure_capacity(cls.vars);
-            self.ground.assert(matrix, &self.bindings, &self.clauses);
-            self.clauses.clear();
+            self.bindings.resize(matrix.clauses[*id].vars);
+            let cls = Off::new(*id, 0);
+            self.ground.insert_clause(matrix, &self.bindings, cls);
         }
         if self.ground.unsat() {
-            return true;
+            return;
         }
-        self.ground.seen_new_clause();
 
         loop {
             statistics::ITERATIVE_DEEPENING_STEPS.inc();
@@ -55,30 +56,24 @@ impl Search {
                 self.start(matrix, *start);
             }
             if self.ground.unsat() {
-                return true;
+                return;
             }
-            if !self.ground.seen_new_clause() {
-                self.depth_limit.increment();
+            if std::mem::take(&mut self.new_clause) {
                 statistics::MAXIMUM_PATH_LIMIT.max(self.depth_limit.as_u32());
             }
+            else {
+                self.depth_limit.increment();
+            }
         }
-    }
-
-    pub(crate) fn print_proof<W: Write>(
-        &self,
-        w: &mut W,
-        matrix: &Matrix,
-    ) -> anyhow::Result<()> {
-        self.ground.print_proof(w, matrix)
     }
 
     fn start(&mut self, matrix: &Matrix, id: Id<Clause>) -> bool {
         let cls = matrix.clauses[id];
         self.clauses.push(Off::new(id, 0));
-        self.bindings.ensure_capacity(cls.vars);
+        self.bindings.resize(cls.vars);
         self.offset = cls.vars.as_u32();
         let mut promises = cls.literals.into_iter().collect::<Vec<_>>();
-        promises.shuffle(self.rng.get());
+        self.rng.shuffle(&mut promises);
         for id in promises {
             let lit = Off::new(id, 0);
             if !self.prove(matrix, lit) {
@@ -97,16 +92,15 @@ impl Search {
             return true;
         }
         statistics::LITERAL_ATTEMPTS.inc();
-        let offset = goal.offset;
         let Literal { pol, atom } = matrix.literals[goal.id];
         let sym = matrix.terms[atom].as_sym();
-        let atom = Off::new(atom, offset);
+        let atom = goal.commute(|_| atom);
 
         // regularity
         for pid in self.path.range() {
             let Path(plit) = self.path[pid];
             let ppol = matrix.literals[plit.id].pol;
-            let patom = Off::new(matrix.literals[plit.id].atom, plit.offset);
+            let patom = plit.commute(|id| matrix.literals[id].atom);
             let psym = matrix.terms[patom.id].as_sym();
             if sym != psym || pol != ppol {
                 continue;
@@ -125,14 +119,13 @@ impl Search {
         for pid in self.path.range() {
             let Path(plit) = self.path[pid];
             let ppol = matrix.literals[plit.id].pol;
-            let patom = Off::new(matrix.literals[plit.id].atom, plit.offset);
+            let patom = plit.commute(|id| matrix.literals[id].atom);
             let psym = matrix.terms[patom.id].as_sym();
             if sym != psym || pol == ppol {
                 continue;
             }
             if self.unify(matrix, atom, patom) {
                 statistics::REDUCTIONS.inc();
-                self.ground.assert(matrix, &self.bindings, &self.clauses);
                 return true;
             }
             self.bindings.undo_to_mark(save_bindings);
@@ -149,26 +142,25 @@ impl Search {
         let save_offset = self.offset;
         self.path.push(Path(goal));
         let mut alternatives = matrix.index[sym][!pol as usize].clone();
-        alternatives.shuffle(self.rng.get());
+        self.rng.shuffle(&mut alternatives);
 
         'extensions: for pos in alternatives {
             let cls = matrix.clauses[pos.cls];
-            self.bindings.ensure_capacity(cls.vars.offset(self.offset));
+            self.bindings.resize(cls.vars.offset(self.offset));
+            self.clauses.push(Off::new(pos.cls, self.offset));
             if self.unify(
                 matrix,
                 atom,
                 Off::new(matrix.literals[pos.lit].atom, self.offset),
             ) {
                 statistics::EXTENSIONS.inc();
-                self.clauses.push(Off::new(pos.cls, self.offset));
                 self.offset += cls.vars.as_u32();
-                self.ground.assert(matrix, &self.bindings, &self.clauses);
                 let mut promises = cls
                     .literals
                     .into_iter()
                     .filter(|id| *id != pos.lit)
                     .collect::<Vec<_>>();
-                promises.shuffle(self.rng.get());
+                self.rng.shuffle(&mut promises);
                 while let Some(index) = promises.iter().position(|id| {
                     self.ground.is_assigned_true(
                         matrix,
@@ -188,6 +180,7 @@ impl Search {
                 self.path.pop();
                 return true;
             }
+            self.clauses.pop();
             self.bindings.undo_to_mark(save_bindings);
         }
         self.offset = save_offset;
@@ -213,12 +206,18 @@ impl Search {
                 if self.bindings.equal(
                     &matrix.symbols,
                     &matrix.terms,
-                    Off::new(diseq.left, cls.offset),
-                    Off::new(diseq.right, cls.offset),
+                    cls.commute(|_| diseq.left),
+                    cls.commute(|_| diseq.right),
                 ) {
                     statistics::TAUTOLOGY_FAILURES.inc();
                     return false;
                 }
+            }
+        }
+        for clause in &self.clauses {
+            if !self.ground.contains_clause(matrix, &self.bindings, *clause) {
+                self.new_clause = true;
+                self.ground.insert_clause(matrix, &self.bindings, *clause);
             }
         }
         true

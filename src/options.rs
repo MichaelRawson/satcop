@@ -18,8 +18,8 @@ pub(crate) struct Options {
     #[clap(long, about = "Print search statistcs")]
     pub(crate) statistics: bool,
 
-    #[clap(long, about = "Print a proof, if found")]
-    pub(crate) proof: bool,
+    #[clap(long, about = "Do not print proof")]
+    pub(crate) quiet: bool,
 
     #[clap(long, default_value = "10", about = "time limit (secs)")]
     pub(crate) time: u64,

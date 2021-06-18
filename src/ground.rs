@@ -38,12 +38,9 @@ impl Record {
 #[derive(Default)]
 pub(crate) struct Ground {
     sat: sat::Solver,
-    scratch: Vec<sat::Lit>,
     atoms: DigestMap<Id<sat::Var>>,
     cache: DigestSet,
     fresh: Id<sat::Var>,
-    new_clause: bool,
-    record: bool,
     origins: BlockMap<sat::Cls, Id<Clause>>,
     record_terms: Block<Record>,
     record_cache: DigestMap<Id<Record>>,
@@ -55,47 +52,8 @@ impl Ground {
         self.sat.seed(seed);
     }
 
-    pub(crate) fn record_proof(&mut self) {
-        self.sat.enable_traces();
-        self.record = true;
-    }
-
     pub(crate) fn unsat(&self) -> bool {
         self.sat.unsat
-    }
-
-    pub(crate) fn assert(
-        &mut self,
-        matrix: &Matrix,
-        bindings: &Bindings,
-        clauses: &[Off<Clause>],
-    ) {
-        for clause in clauses {
-            let mut digest = Digest::default();
-            for literal in matrix.clauses[clause.id].literals {
-                let literal = self.literal(
-                    matrix,
-                    bindings,
-                    Off::new(literal, clause.offset),
-                );
-                self.scratch.push(literal);
-                let code = literal.0 as u32;
-                digest.update(code);
-            }
-            if self.cache.insert(digest) {
-                self.new_clause = true;
-                statistics::SAT_CLAUSES.inc();
-                self.sat.assert(&self.scratch);
-                if self.record {
-                    self.origins.push(clause.id);
-                }
-            }
-            self.scratch.clear();
-        }
-    }
-
-    pub(crate) fn seen_new_clause(&mut self) -> bool {
-        std::mem::take(&mut self.new_clause)
     }
 
     pub(crate) fn is_assigned_true(
@@ -106,6 +64,142 @@ impl Ground {
     ) -> bool {
         let literal = self.literal(matrix, bindings, literal);
         self.sat.assignment[literal.var()] == literal.pol()
+    }
+
+    pub(crate) fn insert_clause(
+        &mut self,
+        matrix: &Matrix,
+        bindings: &Bindings,
+        clause: Off<Clause>,
+    ) {
+        statistics::SAT_CLAUSES.inc();
+        self.origins.push(clause.id);
+        let literals = matrix.clauses[clause.id].literals;
+        let mut sat = Vec::with_capacity(literals.into_iter().len());
+        let mut digest = Digest::default();
+        for literal in literals {
+            let literal =
+                self.literal(matrix, bindings, clause.commute(|_| literal));
+            sat.push(literal);
+            let code = literal.0 as u32;
+            digest.update(code);
+        }
+        self.cache.insert(digest);
+        self.sat.assert(&sat);
+    }
+
+    pub(crate) fn contains_clause(
+        &mut self,
+        matrix: &Matrix,
+        bindings: &Bindings,
+        clause: Off<Clause>,
+    ) -> bool {
+        let mut digest = Digest::default();
+        for literal in matrix.clauses[clause.id].literals {
+            let literal = if let Some(literal) =
+                self.try_literal(matrix, bindings, clause.commute(|_| literal))
+            {
+                literal
+            } else {
+                return false;
+            };
+            let code = literal.0 as u32;
+            digest.update(code);
+        }
+        self.cache.contains(&digest)
+    }
+
+    fn literal(
+        &mut self,
+        matrix: &Matrix,
+        bindings: &Bindings,
+        lit: Off<Literal>,
+    ) -> sat::Lit {
+        let Literal { pol, atom } = matrix.literals[lit.id];
+        let atom = lit.commute(|_| atom);
+        let mut digest = Digest::default();
+        self.term(&mut digest, matrix, bindings, atom);
+        let sat = *self.atoms.entry(digest).or_insert(self.fresh);
+        if sat == self.fresh {
+            statistics::SAT_VARIABLES.inc();
+            self.sat.add_var();
+            self.fresh.increment();
+            let record = self.record(matrix, bindings, atom);
+            self.atom_record.push(record);
+        }
+        sat::Lit::new(pol, sat)
+    }
+
+    fn try_literal(
+        &mut self,
+        matrix: &Matrix,
+        bindings: &Bindings,
+        lit: Off<Literal>,
+    ) -> Option<sat::Lit> {
+        let Literal { pol, atom } = matrix.literals[lit.id];
+        let atom = lit.commute(|_| atom);
+        let mut digest = Digest::default();
+        self.term(&mut digest, matrix, bindings, atom);
+        let sat = *self.atoms.get(&digest)?;
+        Some(sat::Lit::new(pol, sat))
+    }
+
+    fn term(
+        &self,
+        digest: &mut Digest,
+        matrix: &Matrix,
+        bindings: &Bindings,
+        term: Off<Term>,
+    ) {
+        let sym = matrix.terms[term.id].as_sym();
+        digest.update(sym.as_u32());
+        let arity = matrix.symbols[sym].arity;
+        let mut argit = term.id;
+        for _ in 0..arity {
+            argit.increment();
+            let arg = term.commute(|_| matrix.terms[argit].as_arg());
+            let arg = bindings.resolve(&matrix.terms, arg);
+            if matrix.terms[arg.id].is_var() {
+                digest.update(matrix.grounding_constant.as_u32());
+            } else {
+                self.term(digest, matrix, bindings, arg);
+            };
+        }
+    }
+
+    fn record(
+        &mut self,
+        matrix: &Matrix,
+        bindings: &Bindings,
+        term: Off<Term>,
+    ) -> Id<Record> {
+        let sym = matrix.terms[term.id].as_sym();
+        let mut recorded = vec![Record::sym(sym)];
+        let mut digest = Digest::default();
+        digest.update(sym.as_u32());
+
+        let arity = matrix.symbols[sym].arity;
+        let mut argit = term.id;
+        for _ in 0..arity {
+            argit.increment();
+            let arg = term.commute(|_| matrix.terms[argit].as_arg());
+            let arg = bindings.resolve(&matrix.terms, arg);
+            let arg = if matrix.terms[arg.id].is_var() {
+                Record::var()
+            } else {
+                Record::arg(self.record(matrix, bindings, arg))
+            };
+            recorded.push(arg);
+            digest.update(arg.0);
+        }
+        let record_terms = &mut self.record_terms;
+        *self.record_cache.entry(digest).or_insert_with(|| {
+            let start = record_terms.len();
+            for record in recorded {
+                record_terms.push(record);
+            }
+            start
+        })
     }
 
     pub(crate) fn print_proof<W: Write>(
@@ -179,93 +273,5 @@ impl Ground {
         }
         write!(w, ")")?;
         Ok(())
-    }
-
-    fn literal(
-        &mut self,
-        matrix: &Matrix,
-        bindings: &Bindings,
-        lit: Off<Literal>,
-    ) -> sat::Lit {
-        let Literal { pol, atom } = matrix.literals[lit.id];
-        let atom = Off::new(atom, lit.offset);
-        let mut digest = Digest::default();
-        self.term(&mut digest, matrix, bindings, atom);
-        let mut new = false;
-        let fresh = &mut self.fresh;
-        let solver = &mut self.sat;
-        let sat = *self.atoms.entry(digest).or_insert_with(|| {
-            statistics::SAT_VARIABLES.inc();
-            new = true;
-            solver.add_var();
-            let var = *fresh;
-            fresh.increment();
-            var
-        });
-        if new && self.record {
-            let record = self.record(matrix, bindings, atom);
-            self.atom_record.push(record);
-        }
-        sat::Lit::new(pol, sat)
-    }
-
-    fn term(
-        &mut self,
-        digest: &mut Digest,
-        matrix: &Matrix,
-        bindings: &Bindings,
-        term: Off<Term>,
-    ) {
-        let sym = matrix.terms[term.id].as_sym();
-        digest.update(sym.as_u32());
-        let arity = matrix.symbols[sym].arity;
-        let mut argit = term.id;
-        for _ in 0..arity {
-            argit.increment();
-            let arg = matrix.terms[argit].as_arg();
-            let arg =
-                bindings.resolve(&matrix.terms, Off::new(arg, term.offset));
-            if matrix.terms[arg.id].is_var() {
-                digest.update(matrix.grounding_constant.as_u32());
-            } else {
-                self.term(digest, matrix, bindings, arg);
-            };
-        }
-    }
-
-    fn record(
-        &mut self,
-        matrix: &Matrix,
-        bindings: &Bindings,
-        term: Off<Term>,
-    ) -> Id<Record> {
-        let sym = matrix.terms[term.id].as_sym();
-        let mut recorded = vec![Record::sym(sym)];
-        let mut digest = Digest::default();
-        digest.update(sym.as_u32());
-
-        let arity = matrix.symbols[sym].arity;
-        let mut argit = term.id;
-        for _ in 0..arity {
-            argit.increment();
-            let arg = matrix.terms[argit].as_arg();
-            let arg =
-                bindings.resolve(&matrix.terms, Off::new(arg, term.offset));
-            let arg = if matrix.terms[arg.id].is_var() {
-                Record::var()
-            } else {
-                Record::arg(self.record(matrix, bindings, arg))
-            };
-            recorded.push(arg);
-            digest.update(arg.0);
-        }
-        let record_terms = &mut self.record_terms;
-        *self.record_cache.entry(digest).or_insert_with(|| {
-            let start = record_terms.len();
-            for record in recorded {
-                record_terms.push(record);
-            }
-            start
-        })
     }
 }

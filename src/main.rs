@@ -33,31 +33,20 @@ fn report_err<T>(err: anyhow::Error) -> T {
 fn go(matrix: Arc<Matrix>, options: Arc<Options>, index: usize) {
     let mut search = Search::default();
     search.seed(index as u64);
-    if search.go(&*options, &matrix) {
-        let stdout = stdout();
-        let mut lock = stdout.lock();
-        tstp::unsatisfiable(&mut lock, &options)
-            .context("printing unsat")
+    search.go(&matrix);
+
+    let stdout = stdout();
+    let mut lock = stdout.lock();
+    if options.statistics {
+        statistics::print(&mut lock)
+            .context("printing statistics")
             .unwrap_or_else(report_err);
-        if options.statistics {
-            statistics::print(&mut lock)
-                .context("printing statistics")
-                .unwrap_or_else(report_err);
-        }
-        if options.proof {
-            tstp::print_proof(&mut lock, &options, &matrix, &search)
-                .context("printing proof")
-                .unwrap_or_else(report_err);
-        }
-        std::process::exit(0);
-    } else {
-        let stdout = stdout();
-        let mut lock = stdout.lock();
-        tstp::gaveup(&mut lock, &options)
-            .context("printing gaveup")
-            .unwrap_or_else(report_err);
-        std::process::exit(0);
     }
+    search
+        .print_proof(&mut lock, &options, &matrix)
+        .context("printing proof")
+        .unwrap_or_else(report_err);
+    std::process::exit(0);
 }
 
 fn main() {
@@ -71,13 +60,21 @@ fn main() {
         matrix.print_cnf();
         return;
     }
+    if matrix.start.is_empty() {
+        let stdout = stdout();
+        let mut lock = stdout.lock();
+        tstp::gaveup(&mut lock, &options)
+            .context("printing gaveup")
+            .unwrap_or_else(report_err);
+        return;
+    }
 
     statistics::SYMBOLS.set(matrix.symbols.len().as_u32());
     statistics::CLAUSES.set(matrix.clauses.len().as_u32());
     statistics::START_CLAUSES.set(matrix.start.len() as u32);
     for i in 0..num_cpus::get() {
-        let thread_opts = options.clone();
         let thread_matrix = matrix.clone();
+        let thread_opts = options.clone();
         std::thread::Builder::new()
             .stack_size(STACK)
             .name("satcop".to_string())

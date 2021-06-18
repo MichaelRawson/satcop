@@ -1,5 +1,5 @@
+use crate::ground::Ground;
 use crate::options::Options;
-use crate::search::Search;
 use crate::syntax::Matrix;
 use crate::tptp::{SyntaxError, Unsupported};
 use std::io::Write;
@@ -40,24 +40,18 @@ pub(crate) fn timeout<W: Write>(
     Ok(())
 }
 
-pub(crate) fn unsatisfiable<W: Write>(
+pub(crate) fn print_proof<W: Write>(
     w: &mut W,
+    ground: &Ground,
     options: &Options,
+    matrix: &Matrix,
 ) -> anyhow::Result<()> {
     let name = get_problem_name(options);
     writeln!(w, "% SZS status Unsatisfiable for {}", name)?;
-    Ok(())
-}
-
-pub(crate) fn print_proof<W: Write>(
-    w: &mut W,
-    options: &Options,
-    matrix: &Matrix,
-    search: &Search,
-) -> anyhow::Result<()> {
-    let name = get_problem_name(options);
-    writeln!(w, "% SZS output begin Proof for {}", name)?;
-    search.print_proof(w, matrix)?;
-    writeln!(w, "% SZS output end Proof for {}", name)?;
+    if !options.quiet {
+        writeln!(w, "% SZS output begin Proof for {}", name)?;
+        ground.print_proof(w, matrix)?;
+        writeln!(w, "% SZS output end Proof for {}", name)?;
+    }
     Ok(())
 }
