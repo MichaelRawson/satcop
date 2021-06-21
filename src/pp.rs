@@ -24,6 +24,10 @@ impl PP {
         self.builder.new_symbol(sym)
     }
 
+    pub(crate) fn have_conjecture(&mut self) {
+        self.builder.have_conjecture();
+    }
+
     pub(crate) fn process(
         &mut self,
         formula: FOF,

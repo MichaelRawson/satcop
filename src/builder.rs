@@ -32,6 +32,10 @@ impl Builder {
         });
     }
 
+    pub(crate) fn have_conjecture(&mut self) {
+        self.matrix.have_conjecture = true;
+    }
+
     pub(crate) fn finish(mut self) -> Matrix {
         if self.has_equality {
             self.add_equality_axioms();

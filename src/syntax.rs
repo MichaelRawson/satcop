@@ -161,6 +161,7 @@ pub(crate) struct Matrix {
     pub(crate) start: Vec<Id<Clause>>,
     pub(crate) index: BlockMap<Symbol, [Vec<Position>; 2]>,
     pub(crate) grounding_constant: Id<Symbol>,
+    pub(crate) have_conjecture: bool,
 }
 
 impl Matrix {

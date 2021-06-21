@@ -57,13 +57,16 @@ impl Ground {
     }
 
     pub(crate) fn is_assigned_true(
-        &mut self,
+        &self,
         matrix: &Matrix,
         bindings: &Bindings,
         literal: Off<Literal>,
     ) -> bool {
-        let literal = self.literal(matrix, bindings, literal);
-        self.sat.assignment[literal.var()] == literal.pol()
+        if let Some(literal) = self.try_literal(matrix, bindings, literal) {
+            self.sat.assignment[literal.var()] == literal.pol()
+        } else {
+            false
+        }
     }
 
     pub(crate) fn insert_clause(
@@ -84,12 +87,13 @@ impl Ground {
             let code = literal.0 as u32;
             digest.update(code);
         }
-        self.cache.insert(digest);
-        self.sat.assert(&sat);
+        if self.cache.insert(digest) {
+            self.sat.assert(&sat);
+        }
     }
 
     pub(crate) fn contains_clause(
-        &mut self,
+        &self,
         matrix: &Matrix,
         bindings: &Bindings,
         clause: Off<Clause>,
@@ -131,7 +135,7 @@ impl Ground {
     }
 
     fn try_literal(
-        &mut self,
+        &self,
         matrix: &Matrix,
         bindings: &Bindings,
         lit: Off<Literal>,

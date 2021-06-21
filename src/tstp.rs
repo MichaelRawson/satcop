@@ -47,11 +47,16 @@ pub(crate) fn print_proof<W: Write>(
     matrix: &Matrix,
 ) -> anyhow::Result<()> {
     let name = get_problem_name(options);
-    writeln!(w, "% SZS status Unsatisfiable for {}", name)?;
+    let status = if matrix.have_conjecture {
+        "Theorem"
+    } else {
+        "Unsatisfiable"
+    };
+    writeln!(w, "% SZS status {} for {}", status, name)?;
     if !options.quiet {
-        writeln!(w, "% SZS output begin Proof for {}", name)?;
+        writeln!(w, "% SZS output begin ListOfCNF for {}", name)?;
         ground.print_proof(w, matrix)?;
-        writeln!(w, "% SZS output end Proof for {}", name)?;
+        writeln!(w, "% SZS output end ListOfCNF for {}", name)?;
     }
     Ok(())
 }

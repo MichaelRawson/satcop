@@ -478,6 +478,7 @@ impl Loader {
         self.free.clear();
         let mut formula = annotated.formula.load(self)?;
         if negate {
+            self.pp.have_conjecture();
             formula = formula.negated();
         }
         self.pp.process(formula, is_goal, source, self.fresh);

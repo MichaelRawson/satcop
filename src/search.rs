@@ -60,8 +60,7 @@ impl Search {
             }
             if std::mem::take(&mut self.new_clause) {
                 statistics::MAXIMUM_PATH_LIMIT.max(self.depth_limit.as_u32());
-            }
-            else {
+            } else {
                 self.depth_limit.increment();
             }
         }
