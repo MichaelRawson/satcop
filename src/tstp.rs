@@ -54,7 +54,7 @@ pub(crate) fn print_proof<W: Write>(
     };
     writeln!(w, "% SZS status {} for {}", status, name)?;
     if !options.quiet {
-        writeln!(w, "% SZS output begin ListOfCNF for {}", name)?;
+        writeln!(w, "% SZS output start ListOfCNF for {}", name)?;
         ground.print_proof(w, matrix)?;
         writeln!(w, "% SZS output end ListOfCNF for {}", name)?;
     }
