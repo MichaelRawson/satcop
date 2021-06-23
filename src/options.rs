@@ -21,8 +21,8 @@ pub(crate) struct Options {
     #[clap(long, about = "Do not print proof")]
     pub(crate) quiet: bool,
 
-    #[clap(long, default_value = "10", about = "time limit (secs)")]
-    pub(crate) time: u64,
+    #[clap(long, about = "enforce time limit (secs)")]
+    pub(crate) time: Option<u64>,
 }
 
 impl Options {

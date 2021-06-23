@@ -38,6 +38,7 @@ impl Record {
 #[derive(Default)]
 pub(crate) struct Ground {
     sat: sat::Solver,
+    scratch: Vec<sat::Lit>,
     atoms: DigestMap<Id<sat::Var>>,
     cache: DigestSet,
     fresh: Id<sat::Var>,
@@ -78,18 +79,18 @@ impl Ground {
         statistics::SAT_CLAUSES.inc();
         self.origins.push(clause.id);
         let literals = matrix.clauses[clause.id].literals;
-        let mut sat = Vec::with_capacity(literals.into_iter().len());
         let mut digest = Digest::default();
         for literal in literals {
             let literal =
                 self.literal(matrix, bindings, clause.commute(|_| literal));
-            sat.push(literal);
+            self.scratch.push(literal);
             let code = literal.0 as u32;
             digest.update(code);
         }
         if self.cache.insert(digest) {
-            self.sat.assert(&sat);
+            self.sat.assert(&self.scratch);
         }
+        self.scratch.clear();
     }
 
     pub(crate) fn contains_clause(

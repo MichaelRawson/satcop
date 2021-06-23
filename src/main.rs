@@ -83,15 +83,21 @@ fn main() {
             .unwrap_or_else(report_err);
     }
 
-    let assigned = Duration::new(options.time, 0);
-    let elapsed = start.elapsed();
-    if let Some(remaining) = assigned.checked_sub(elapsed) {
-        std::thread::sleep(remaining);
+    if let Some(limit) = options.time {
+        let assigned = Duration::new(limit, 0);
+        let elapsed = start.elapsed();
+        if let Some(remaining) = assigned.checked_sub(elapsed) {
+            std::thread::sleep(remaining);
+        }
+        let stdout = stdout();
+        let mut lock = stdout.lock();
+        tstp::timeout(&mut lock, &options)
+            .context("printing timeout")
+            .unwrap_or_else(report_err);
+        std::process::exit(0);
+    } else {
+        loop {
+            std::thread::sleep(Duration::new(u64::MAX, 0));
+        }
     }
-    let stdout = stdout();
-    let mut lock = stdout.lock();
-    tstp::timeout(&mut lock, &options)
-        .context("printing timeout")
-        .unwrap_or_else(report_err);
-    std::process::exit(0);
 }
